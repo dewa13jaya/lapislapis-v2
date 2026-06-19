@@ -1,0 +1,22 @@
+{
+  "name": "lapislapis-system",
+  "version": "2.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "xlsx": "^0.18.5",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version"]
+  }
+}
