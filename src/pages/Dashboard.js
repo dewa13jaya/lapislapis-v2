@@ -1,6 +1,6 @@
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/UI';
-import { fmtDate, today, STATUS_CFG } from '../utils';
+import { fmtDate, today, STATUS_CFG, useIsMobile } from '../utils';
 
 // ── Chart helpers ──────────────────────────────────────────────────────────────
 
@@ -88,6 +88,7 @@ function HBarChart({ data, max }) {
 
 export default function Dashboard({ products, currentStock, orders, stockIn, returns, outlets, stockOut }) {
   const { user } = useAuth();
+  const isMobile = useIsMobile();
 
   const todayStr = today();
   const STATUS_COLORS = {
@@ -165,11 +166,50 @@ export default function Dashboard({ products, currentStock, orders, stockIn, ret
   // ── Recent orders (today or latest 5) ────────────────────────────────────
   const recentOrders = [...orders].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 6);
 
+  // ── WhatsApp Recap ────────────────────────────────────────────────────────
+  const sendWhatsAppRecap = () => {
+    const tgl = new Date().toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+    const lines = [];
+    lines.push(`📊 *REKAP LAPISLAPIS*`);
+    lines.push(`📅 ${tgl}`);
+    lines.push('');
+    lines.push(`*STATUS ORDER:*`);
+    lines.push(`⏳ Pending      : ${pendingOrders} order`);
+    lines.push(`🔨 Konfirmasi   : ${confirmedOrders} order`);
+    lines.push(`📦 Siap Kirim   : ${packedOrders} order`);
+    lines.push(`✅ Dikirim Hari Ini : ${deliveredToday} order`);
+    lines.push('');
+    if (stockWarnings.length > 0) {
+      lines.push(`*⚠️ STOK PERLU PERHATIAN (${stockWarnings.length} produk):*`);
+      stockWarnings.slice(0, 8).forEach(p => {
+        lines.push(`• ${p.name}: ${p.saldo <= 0 ? '❌ HABIS' : `⚡ ${p.saldo} ${p.unit}`}`);
+      });
+      if (stockWarnings.length > 8) lines.push(`• ...dan ${stockWarnings.length - 8} produk lainnya`);
+    } else {
+      lines.push(`✅ Semua stok aman`);
+    }
+    if (top5.length > 0) {
+      lines.push('');
+      lines.push(`*🏆 TOP PRODUK:*`);
+      top5.forEach((p, i) => lines.push(`${i+1}. ${p.label} (${p.v})`));
+    }
+    lines.push('');
+    lines.push(`_Dikirim dari LAPISLAPIS System_`);
+    const text = encodeURIComponent(lines.join('\n'));
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontWeight: 800, color: '#1C1208' }}>Dashboard</h2>
-        <div style={{ fontSize: 12, color: '#94a3b8' }}>📅 {new Date().toLocaleDateString('id-ID', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontSize: 12, color: '#94a3b8' }}>📅 {new Date().toLocaleDateString('id-ID', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</div>
+          <button onClick={sendWhatsAppRecap} style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', background:'#25D366', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.125.555 4.12 1.524 5.855L.057 23.882a.5.5 0 0 0 .606.61l6.157-1.615A11.94 11.94 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.894a9.877 9.877 0 0 1-5.032-1.378l-.36-.214-3.733.979.997-3.645-.235-.374A9.869 9.869 0 0 1 2.106 12C2.106 6.533 6.533 2.106 12 2.106S21.894 6.533 21.894 12 17.467 21.894 12 21.894z"/></svg>
+            Kirim Rekap WA
+          </button>
+        </div>
       </div>
 
       {/* ── Alert stok habis ── */}
@@ -184,7 +224,7 @@ export default function Dashboard({ products, currentStock, orders, stockIn, ret
       )}
 
       {/* ── Stat Cards ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2,1fr)' : 'repeat(4,1fr)', gap: isMobile ? 8 : 12, marginBottom: 16 }}>
         {cards.map(c => (
           <div key={c.label} style={{ background: '#fff', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,.07)', borderTop: `3px solid ${c.color}`, display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ fontSize: 28, lineHeight: 1 }}>{c.icon}</div>
@@ -198,7 +238,7 @@ export default function Dashboard({ products, currentStock, orders, stockIn, ret
       </div>
 
       {/* ── Charts row ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1fr', gap: 12, marginBottom: 12 }}>
 
         {/* Trend 4 minggu */}
         <div style={{ background: '#fff', borderRadius: 12, padding: '16px 20px', boxShadow: '0 1px 4px rgba(0,0,0,.07)' }}>
@@ -233,7 +273,7 @@ export default function Dashboard({ products, currentStock, orders, stockIn, ret
       </div>
 
       {/* ── Bottom row ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 12 }}>
 
         {/* Top 5 produk terlaris */}
         <div style={{ background: '#fff', borderRadius: 12, padding: '16px 20px', boxShadow: '0 1px 4px rgba(0,0,0,.07)' }}>
@@ -278,7 +318,7 @@ export default function Dashboard({ products, currentStock, orders, stockIn, ret
         </div>
         {recentOrders.length === 0
           ? <div style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', padding: 20 }}>Belum ada order</div>
-          : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+          : <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3,1fr)', gap: 8 }}>
             {recentOrders.map(o => {
               const outlet = outlets.find(x => x.id === o.outlet_id);
               return (

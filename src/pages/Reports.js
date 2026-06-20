@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { fmtDate, today } from '../utils';
+import { fmtDate, today, useIsMobile } from '../utils';
 
 const fmtRp = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
 const thisMonthStart = () => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10);
@@ -34,12 +34,18 @@ const SALES_TABS = [
 const STOK_TABS = [
   { id:'stok', label:'📦 Stok & Pergerakan' },
 ];
+const RETUR_TABS = [
+  { id:'retur', label:'↩️ Analisis Retur' },
+];
+const PRODUKSI_TABS = [
+  { id:'produksi', label:'⚖️ Produksi vs Penjualan' },
+];
 const ROLE_TABS = {
-  admin:           [...SALES_TABS, ...STOK_TABS],
-  kepala_sales:    SALES_TABS,
-  sales:           SALES_TABS,       // filtered by user.outlet_ids
-  kepala_produksi: STOK_TABS,
-  produksi:        [],               // no report access
+  admin:           [...SALES_TABS, ...STOK_TABS, ...RETUR_TABS, ...PRODUKSI_TABS],
+  kepala_sales:    [...SALES_TABS, ...RETUR_TABS],
+  sales:           SALES_TABS,
+  kepala_produksi: [...STOK_TABS, ...RETUR_TABS, ...PRODUKSI_TABS],
+  produksi:        [],
 };
 
 const STATUS_BG   = { delivered:'#d1fae5', partial_delivered:'#fff7ed', confirmed:'#dbeafe', packed:'#FBF5DF', pending:'#f1f5f9', cancelled:'#fee2e2' };
@@ -48,6 +54,7 @@ const KAT_LIST    = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
 
 export default function Reports({ products, outlets, orders, stockIn, stockOut, returns, currentStock }) {
   const { user } = useAuth();
+  const isMobile = useIsMobile();
   const role = user?.role || 'sales';
   const tabs = ROLE_TABS[role] || SALES_TABS;
 
@@ -179,6 +186,82 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
       return { product: p, masuk, keluar, retur, saldo: currentStock[p.id] || 0 };
     });
 
+  // ── TAB RETUR: Analisis Retur ─────────────────────────────────────────────
+  const returInRange = returns.filter(r => inRange(r.date));
+
+  const returByProduct = (() => {
+    const map = {};
+    returInRange.forEach(r => {
+      const p = products.find(x => x.id === r.product_id);
+      if (!p) return;
+      if (!map[r.product_id]) map[r.product_id] = { name: p.name, unit: p.unit, qty: 0, count: 0 };
+      map[r.product_id].qty += Number(r.qty || 0);
+      map[r.product_id].count += 1;
+    });
+    return Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, 10);
+  })();
+
+  const returByReason = (() => {
+    const map = {};
+    returInRange.forEach(r => {
+      const key = r.reason || r.return_reason || 'Tidak diketahui';
+      map[key] = (map[key] || 0) + Number(r.qty || 0);
+    });
+    return Object.entries(map).map(([label, v]) => ({ label, v })).sort((a, b) => b.v - a.v);
+  })();
+
+  const returByOutlet = (() => {
+    const map = {};
+    returInRange.forEach(r => {
+      const outletName = outlets.find(o => o.id === r.outlet_id)?.name || 'Tidak diketahui';
+      if (!map[outletName]) map[outletName] = { qty: 0, count: 0 };
+      map[outletName].qty += Number(r.qty || 0);
+      map[outletName].count += 1;
+    });
+    return Object.entries(map).map(([label, d]) => ({ label, ...d })).sort((a, b) => b.qty - a.qty);
+  })();
+
+  const returByKondisi = (() => {
+    const labels = { kondisi_ok:'✅ Kondisi OK', expired_rusak:'🗑️ Expired/Rusak', konversi:'✂️ Konversi' };
+    const map = {};
+    returInRange.forEach(r => {
+      const key = labels[r.return_type] || r.return_type || 'Lainnya';
+      map[key] = (map[key] || 0) + Number(r.qty || 0);
+    });
+    return Object.entries(map).map(([label, v]) => ({ label, v })).sort((a, b) => b.v - a.v);
+  })();
+
+  const totalReturQty = returInRange.reduce((s, r) => s + Number(r.qty || 0), 0);
+
+  // ── TAB PRODUKSI VS PENJUALAN ─────────────────────────────────────────────
+  const produksiReport = (() => {
+    const produksiOrders = orders.filter(o =>
+      ['delivered','partial_delivered'].includes(o.status) && inRange(o.delivery_date)
+    );
+    return products
+      .filter(p => !filterKat || p.kategori === filterKat)
+      .map(p => {
+        const diproduksi = stockIn
+          .filter(x => x.product_id === p.id && inRange(x.date))
+          .reduce((s, x) => s + Number(x.qty || 0), 0);
+        const terjual = produksiOrders
+          .flatMap(o => o.order_items || [])
+          .filter(i => i.product_id === p.id)
+          .reduce((s, i) => s + Number(i.qty_delivered ?? i.qty ?? 0), 0);
+        const diretur = returInRange
+          .filter(r => r.product_id === p.id && r.return_type === 'expired_rusak')
+          .reduce((s, r) => s + Number(r.qty || 0), 0);
+        const efisiensi = diproduksi > 0 ? Math.round((terjual / diproduksi) * 100) : null;
+        return { product: p, diproduksi, terjual, diretur, efisiensi };
+      })
+      .filter(r => r.diproduksi > 0 || r.terjual > 0)
+      .sort((a, b) => b.diproduksi - a.diproduksi);
+  })();
+
+  const totalDiproduksi = produksiReport.reduce((s, r) => s + r.diproduksi, 0);
+  const totalTerjual    = produksiReport.reduce((s, r) => s + r.terjual, 0);
+  const globalEfisiensi = totalDiproduksi > 0 ? Math.round((totalTerjual / totalDiproduksi) * 100) : 0;
+
   // ── Export Excel ──────────────────────────────────────────────────────────
   const exportExcel = async () => {
     const XLSX = await import('xlsx');
@@ -239,19 +322,19 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
   return (
     <div>
       {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20, flexWrap:'wrap', gap:12 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:12 }}>
         <h2 style={{ margin:0, fontWeight:800, color:'#1C1208' }}>Laporan</h2>
         <div style={{ display:'flex', gap:8 }}>
-          <button onClick={exportExcel} style={{ padding:'8px 16px', background:'#10b981', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:700 }}>⬇ Excel</button>
-          <button onClick={exportPDF}   style={{ padding:'8px 16px', background:'#ef4444', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:700 }}>🖨 Print PDF</button>
+          <button onClick={exportExcel} style={{ padding: isMobile ? '7px 12px' : '8px 16px', background:'#10b981', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize: isMobile ? 12 : 13, fontWeight:700 }}>⬇ Excel</button>
+          <button onClick={exportPDF}   style={{ padding: isMobile ? '7px 12px' : '8px 16px', background:'#ef4444', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize: isMobile ? 12 : 13, fontWeight:700 }}>🖨 Print</button>
         </div>
       </div>
 
       {/* Tab selector */}
-      <div style={{ display:'flex', gap:6, marginBottom:16, flexWrap:'wrap' }}>
+      <div style={{ display:'flex', gap:6, marginBottom:16, overflowX:'auto', paddingBottom:4 }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); resetFilters(); }}
-            style={{ padding:'10px 18px', fontSize:13, fontWeight:700, background: tab===t.id ? '#1C1208' : '#fff', color: tab===t.id ? '#fff' : '#64748b', border: `2px solid ${tab===t.id ? '#1C1208' : '#e2e8f0'}`, borderRadius:10, cursor:'pointer' }}>
+            style={{ padding: isMobile ? '8px 12px' : '10px 18px', fontSize: isMobile ? 12 : 13, fontWeight:700, background: tab===t.id ? '#1C1208' : '#fff', color: tab===t.id ? '#fff' : '#64748b', border: `2px solid ${tab===t.id ? '#1C1208' : '#e2e8f0'}`, borderRadius:10, cursor:'pointer', whiteSpace:'nowrap' }}>
             {t.label}
           </button>
         ))}
@@ -618,6 +701,188 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
               </table>
             </Card>
           )}
+        </>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* TAB RETUR — ANALISIS RETUR                                          */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {tab === 'retur' && (
+        <>
+          {/* Stat cards */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:12, marginBottom:16 }}>
+            <StatCard label="Total Retur (Qty)"   val={totalReturQty}          color="#B49A35" />
+            <StatCard label="Transaksi Retur"      val={returInRange.length}    color="#3b82f6" />
+            <StatCard label="Produk Berbeda"       val={returByProduct.length}  color="#8b5cf6" />
+            <StatCard label="Outlet Retur"         val={returByOutlet.length}   color="#ef4444" />
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:12, marginBottom:12 }}>
+            {/* Top produk diretur */}
+            <Card style={{ marginBottom:0 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:'#1C1208', marginBottom:12 }}>🏆 Produk Paling Sering Diretur</div>
+              {returByProduct.length === 0
+                ? <div style={{ color:'#94a3b8', textAlign:'center', padding:24 }}>Tidak ada retur di periode ini</div>
+                : <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                  <thead><tr style={{ background:'#f8f7f4' }}>
+                    <TH>#</TH><TH>Produk</TH><TH right>Qty Retur</TH><TH right>Frekuensi</TH>
+                  </tr></thead>
+                  <tbody>
+                    {returByProduct.map((r, i) => (
+                      <tr key={r.name} style={{ borderBottom:'1px solid #f1f5f9', background: i === 0 ? '#fff8f0' : '#fff' }}>
+                        <TD color="#94a3b8">{i+1}</TD>
+                        <TD bold>{r.name}</TD>
+                        <TD right bold color="#ef4444">{r.qty} <span style={{ fontWeight:400, color:'#94a3b8', fontSize:11 }}>{r.unit}</span></TD>
+                        <TD right color="#64748b">{r.count}x</TD>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              }
+            </Card>
+
+            {/* Top outlet retur */}
+            <Card style={{ marginBottom:0 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:'#1C1208', marginBottom:12 }}>🏪 Outlet dengan Retur Terbanyak</div>
+              {returByOutlet.length === 0
+                ? <div style={{ color:'#94a3b8', textAlign:'center', padding:24 }}>Tidak ada data</div>
+                : <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                  <thead><tr style={{ background:'#f8f7f4' }}>
+                    <TH>Outlet</TH><TH right>Qty</TH><TH right>Frekuensi</TH>
+                  </tr></thead>
+                  <tbody>
+                    {returByOutlet.map((r, i) => (
+                      <tr key={r.label} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                        <TD bold>{r.label}</TD>
+                        <TD right bold color="#ef4444">{r.qty}</TD>
+                        <TD right color="#64748b">{r.count}x</TD>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              }
+            </Card>
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:12 }}>
+            {/* Alasan retur */}
+            <Card style={{ marginBottom:0 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:'#1C1208', marginBottom:12 }}>📋 Alasan Retur Terbanyak</div>
+              {returByReason.length === 0
+                ? <div style={{ color:'#94a3b8', textAlign:'center', padding:24 }}>Tidak ada data</div>
+                : <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                  <thead><tr style={{ background:'#f8f7f4' }}>
+                    <TH>Alasan</TH><TH right>Qty</TH><TH right>%</TH>
+                  </tr></thead>
+                  <tbody>
+                    {returByReason.map(r => (
+                      <tr key={r.label} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                        <TD>{r.label}</TD>
+                        <TD right bold color="#B49A35">{r.v}</TD>
+                        <TD right color="#64748b">{totalReturQty > 0 ? Math.round(r.v/totalReturQty*100) : 0}%</TD>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              }
+            </Card>
+
+            {/* Kondisi barang retur */}
+            <Card style={{ marginBottom:0 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:'#1C1208', marginBottom:12 }}>🔍 Kondisi Barang Retur</div>
+              {returByKondisi.length === 0
+                ? <div style={{ color:'#94a3b8', textAlign:'center', padding:24 }}>Tidak ada data</div>
+                : <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                  <thead><tr style={{ background:'#f8f7f4' }}>
+                    <TH>Kondisi</TH><TH right>Qty</TH><TH right>%</TH>
+                  </tr></thead>
+                  <tbody>
+                    {returByKondisi.map(r => (
+                      <tr key={r.label} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                        <TD bold>{r.label}</TD>
+                        <TD right bold color="#3b82f6">{r.v}</TD>
+                        <TD right color="#64748b">{totalReturQty > 0 ? Math.round(r.v/totalReturQty*100) : 0}%</TD>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              }
+            </Card>
+          </div>
+        </>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* TAB PRODUKSI VS PENJUALAN                                           */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {tab === 'produksi' && (
+        <>
+          {/* Summary cards */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, marginBottom:16 }}>
+            <StatCard label="Total Diproduksi"  val={totalDiproduksi}        color="#3b82f6" />
+            <StatCard label="Total Terjual"      val={totalTerjual}           color="#10b981" />
+            <StatCard label="Efisiensi Global"   val={`${globalEfisiensi}%`}  color={globalEfisiensi >= 80 ? '#10b981' : globalEfisiensi >= 50 ? '#B49A35' : '#ef4444'} />
+            <StatCard label="Sisa / Tidak Terjual" val={totalDiproduksi - totalTerjual} color="#B49A35" />
+          </div>
+
+          {/* Info bar efisiensi */}
+          <div style={{ marginBottom:16, padding:'10px 16px', borderRadius:10, background: globalEfisiensi >= 80 ? '#d1fae5' : globalEfisiensi >= 50 ? '#FBF5DF' : '#fee2e2', border: `1px solid ${globalEfisiensi >= 80 ? '#6ee7b7' : globalEfisiensi >= 50 ? '#D4B340' : '#fca5a5'}` }}>
+            <span style={{ fontWeight:700, fontSize:13, color: globalEfisiensi >= 80 ? '#065f46' : globalEfisiensi >= 50 ? '#6B5418' : '#991b1b' }}>
+              {globalEfisiensi >= 80 ? '✅ Efisiensi Baik' : globalEfisiensi >= 50 ? '⚠️ Efisiensi Sedang' : '🔴 Efisiensi Rendah'}
+              {' '}— {globalEfisiensi}% produksi berhasil terjual di periode ini.
+            </span>
+          </div>
+
+          {/* Filter kategori */}
+          <div style={{ marginBottom:12 }}>
+            <select value={filterKat} onChange={e => setFilterKat(e.target.value)}
+              style={{ padding:'8px 12px', border:'1.5px solid #e2e8f0', borderRadius:8, fontSize:13, background:'#fff' }}>
+              <option value=''>Semua Kategori</option>
+              {KAT_LIST.map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </div>
+
+          <Card>
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13, minWidth:600 }}>
+                <thead><tr style={{ background:'#f8f7f4' }}>
+                  <TH>Produk</TH>
+                  <TH>Kategori</TH>
+                  <TH right>Diproduksi</TH>
+                  <TH right>Terjual</TH>
+                  <TH right>Retur Rusak</TH>
+                  <TH right>Sisa</TH>
+                  <TH right>Efisiensi</TH>
+                </tr></thead>
+                <tbody>
+                  {produksiReport.length === 0
+                    ? <tr><td colSpan={7} style={{ textAlign:'center', padding:32, color:'#94a3b8' }}>Tidak ada data produksi di periode ini</td></tr>
+                    : produksiReport.map(r => {
+                      const sisa = r.diproduksi - r.terjual;
+                      const ef = r.efisiensi;
+                      const efColor = ef === null ? '#94a3b8' : ef >= 80 ? '#10b981' : ef >= 50 ? '#B49A35' : '#ef4444';
+                      return (
+                        <tr key={r.product.id} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                          <TD bold>{r.product.name}</TD>
+                          <TD small color="#64748b">{r.product.kategori||'-'}</TD>
+                          <TD right bold color="#3b82f6">{r.diproduksi}</TD>
+                          <TD right bold color="#10b981">{r.terjual}</TD>
+                          <TD right bold color={r.diretur > 0 ? '#ef4444' : '#94a3b8'}>{r.diretur > 0 ? r.diretur : '—'}</TD>
+                          <TD right bold color={sisa > 0 ? '#B49A35' : '#94a3b8'}>{sisa > 0 ? sisa : '—'}</TD>
+                          <td style={{ padding:'10px 12px', textAlign:'right' }}>
+                            {ef === null
+                              ? <span style={{ color:'#94a3b8', fontSize:12 }}>—</span>
+                              : <span style={{ fontWeight:800, fontSize:13, color: efColor }}>{ef}%</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })
+                  }
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useIsMobile } from './utils';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { supabase } from './supabase';
 import { Toast } from './components/UI';
@@ -13,6 +14,7 @@ import { StaffManager, ActivityLog, ProductManager, OutletManager } from './page
 
 function MainApp() {
   const { user } = useAuth();
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState('dashboard');
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(true);
@@ -91,7 +93,7 @@ function MainApp() {
     <div style={{ minHeight:'100vh', background:'#f8f7f4', fontFamily:"'Inter','Segoe UI',sans-serif" }}>
       <Toast msg={toast} />
       <Header tab={tab} setTab={setTab} />
-      <div style={{ maxWidth:1280, margin:'0 auto', padding:'24px' }}>
+      <div style={{ maxWidth:1280, margin:'0 auto', padding: isMobile ? '12px' : '24px' }}>
         {tab === 'dashboard'   && <Dashboard {...pageProps} />}
         {tab === 'stok'        && <StockManager {...pageProps} />}
         {tab === 'orders'      && <OrderManager {...pageProps} />}

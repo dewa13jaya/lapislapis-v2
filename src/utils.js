@@ -1,3 +1,16 @@
+import { useState, useEffect } from 'react';
+
+// ─── RESPONSIVE HOOK ──────────────────────────────────────────────────────────
+export function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 // ─── UTILITIES ────────────────────────────────────────────────────────────────
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6).toUpperCase();
 export const today = () => new Date().toISOString().slice(0,10);
