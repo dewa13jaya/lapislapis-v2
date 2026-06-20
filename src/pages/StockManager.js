@@ -50,36 +50,54 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
 
   const canEdit = ['admin','produksi','kepala_produksi'].includes(user?.role);
 
-  const SIZE_ORDER = ['Slice','Quarter','Half','Round','Square'];
-  const getVariant  = name => { const m = name.match(/^(.+?)\s*-\s*(Slice|Quarter|Half|Round|Square|Loyang)$/i); return m ? m[1].trim() : name; };
-  const getSizeName = name => { const m = name.match(/\s*-\s*(Slice|Quarter|Half|Round|Square|Loyang)$/i); return m ? m[1] : ''; };
+  const SIZE_ORDER = ['Slice','Quarter','Half','Round','Square','Loyang'];
+  // Standard: "Nama Produk Ukuran" (tanpa dash). Dash juga tetap dibaca untuk backward compat.
+  // Contoh: "Lapis Surabaya Pandan Half", "Lapis Legit Original Slice"
+  const SIZES_RE = /\s*[-–]?\s*(Slice|Quarter|Half|Round|Square|Loyang)\s*$/i;
+  const getSizeName = name => { const m = name.match(SIZES_RE); return m ? m[1] : ''; };
+  const getVariant  = name => name.replace(SIZES_RE, '').trim();
   const variantsFor = kat => [...new Set(products.filter(p => !kat || p.kategori === kat).map(p => getVariant(p.name)))].sort();
   const sizesFor    = variant => products.filter(p => getVariant(p.name) === variant).sort((a,b) => {
-    const ai = SIZE_ORDER.findIndex(s => a.name.endsWith(s)), bi = SIZE_ORDER.findIndex(s => b.name.endsWith(s));
+    const ai = SIZE_ORDER.findIndex(s => getSizeName(a.name).toLowerCase() === s.toLowerCase());
+    const bi = SIZE_ORDER.findIndex(s => getSizeName(b.name).toLowerCase() === s.toLowerCase());
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
+  // SMART: detect auto-ratio targets by name convention
+  // Returns [] if no match — caller falls back to MANUAL mode
   const getConversionTargets = (product) => {
     if (!product) return [];
     const size = getSizeName(product.name);
     const variant = getVariant(product.name);
     const kat = product.kategori;
+    // 1) Same-variant match (exact)
     const sameVariant = products.filter(p => getVariant(p.name) === variant && p.id !== product.id);
-    const find = s => sameVariant.find(p => getSizeName(p.name).toLowerCase() === s.toLowerCase());
+    // 2) Same-kategori fallback (different variant — e.g. Loyang Pandan → Half Mocca but same line)
+    const sameKat = products.filter(p => p.kategori === kat && p.id !== product.id);
+    const findSize = s => {
+      const exact = sameVariant.find(p => getSizeName(p.name).toLowerCase() === s.toLowerCase());
+      if (exact) return exact;
+      // Fallback: same kategori, same size keyword, share a common word in name
+      const varWords = variant.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      return sameKat.find(p =>
+        getSizeName(p.name).toLowerCase() === s.toLowerCase() &&
+        varWords.some(w => p.name.toLowerCase().includes(w))
+      );
+    };
     const targets = [];
     if (kat === 'Lapis Legit') {
       if (size === 'Half') {
-        const qtr = find('Quarter'); if (qtr) targets.push({ product: qtr, label:'Quarter', ratio:2,    isAuto:true  });
-        const slc = find('Slice');   if (slc) targets.push({ product: slc, label:'Slice',   ratio:null, isAuto:false });
+        const qtr = findSize('Quarter'); if (qtr) targets.push({ product: qtr, label:'Quarter', ratio:2,    isAuto:true  });
+        const slc = findSize('Slice');   if (slc) targets.push({ product: slc, label:'Slice',   ratio:null, isAuto:false });
       } else if (size === 'Quarter') {
-        const slc = find('Slice');   if (slc) targets.push({ product: slc, label:'Slice',   ratio:null, isAuto:false });
+        const slc = findSize('Slice');   if (slc) targets.push({ product: slc, label:'Slice',   ratio:null, isAuto:false });
       }
     } else if (kat === 'Lapis Surabaya') {
       if (size === 'Loyang' || size === '') {
-        const half = find('Half');  if (half) targets.push({ product: half, label:'Half',  ratio:2,    isAuto:true  });
-        const slc  = find('Slice'); if (slc)  targets.push({ product: slc,  label:'Slice', ratio:null, isAuto:false });
+        const half = findSize('Half');  if (half) targets.push({ product: half, label:'Half',  ratio:2,    isAuto:true  });
+        const slc  = findSize('Slice'); if (slc)  targets.push({ product: slc,  label:'Slice', ratio:null, isAuto:false });
       } else if (size === 'Half') {
-        const slc = find('Slice');  if (slc) targets.push({ product: slc,  label:'Slice',  ratio:null, isAuto:false });
+        const slc = findSize('Slice');  if (slc) targets.push({ product: slc,  label:'Slice',  ratio:null, isAuto:false });
       }
     }
     return targets;
@@ -344,9 +362,8 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                           <select value={konvSrcId} onChange={e => { setKonvSrcId(e.target.value); setKonvTargetId(''); setKonvManualQty(''); }} style={S.input}>
                             <option value=''>-- Pilih Ukuran --</option>
                             {sizesFor(konvVariant).map(p => {
-                              const size = p.name.replace(konvVariant,'').replace(/^\s*-\s*/,'').trim()||'Standard';
-                              const tgts = getConversionTargets(p);
-                              return <option key={p.id} value={p.id} disabled={tgts.length===0}>{size} — Stok: {currentStock[p.id]||0} {p.unit}{tgts.length===0?' (tidak bisa dikonversi)':''}</option>;
+                              const sizeLbl = getSizeName(p.name) || 'Standard';
+                              return <option key={p.id} value={p.id}>{sizeLbl} — Stok: {currentStock[p.id]||0} {p.unit}</option>;
                             })}
                           </select>
                         </FieldGroup>
@@ -361,9 +378,11 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                         </FieldGroup>
                       </div>
                     )}
+
+                    {/* ── Smart mode: auto-detected targets ── */}
                     {konvSrcId && convTargets.length > 0 && (
                       <div style={{ marginTop:14, padding:12, background:'#f5f3ff', borderRadius:10, border:'1px solid #ddd6fe' }}>
-                        <div style={{ fontSize:12, fontWeight:700, color:'#6d28d9', marginBottom:10 }}>Konversi ke Ukuran</div>
+                        <div style={{ fontSize:12, fontWeight:700, color:'#6d28d9', marginBottom:10 }}>✂️ Konversi ke Ukuran</div>
                         <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
                           {convTargets.map(t => {
                             const previewQty = t.isAuto && konvQty ? Number(konvQty)*t.ratio : null;
@@ -372,7 +391,8 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                               <button key={t.product.id} onClick={() => { setKonvTargetId(t.product.id); setKonvManualQty(''); }}
                                 style={{ flex:1, padding:'10px 8px', borderRadius:10, border:`2px solid ${isSel?'#8b5cf6':'#e2e8f0'}`, cursor:'pointer', textAlign:'center', fontSize:12, fontWeight:700, background: isSel?'#ede9fe':'#fff', color: isSel?'#6d28d9':'#64748b' }}>
                                 <div>{t.label}</div>
-                                {t.isAuto && previewQty && <div style={{ fontSize:10, fontWeight:400, marginTop:2 }}>= {previewQty} {t.product.unit}</div>}
+                                <div style={{ fontSize:10, fontWeight:400, marginTop:2, color:'#94a3b8' }}>{t.product.name}</div>
+                                {t.isAuto && previewQty && <div style={{ fontSize:11, fontWeight:700, marginTop:2, color:'#6d28d9' }}>= {previewQty} {t.product.unit}</div>}
                                 {!t.isAuto && <div style={{ fontSize:10, fontWeight:400, marginTop:2 }}>qty manual</div>}
                               </button>
                             );
@@ -381,14 +401,37 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                         {konvTargetId && selTarget && (
                           <div style={{ marginTop:12 }}>
                             {selTarget.isAuto && autoQty
-                              ? <div style={{ padding:'10px 12px', background:'#dbeafe', borderRadius:8, fontSize:13, color:'#1e40af', fontWeight:700 }}>📐 {konvQty} {srcProd?.unit} → {autoQty} {selTarget.product.unit} {selTarget.label}</div>
-                              : <FieldGroup label={`Qty Hasil (${selTarget.label})`}><input type="number" min="1" value={konvManualQty} onChange={e => setKonvManualQty(e.target.value)} style={S.input} placeholder={`Masukkan jumlah ${selTarget.label}`} /></FieldGroup>
+                              ? <div style={{ padding:'10px 12px', background:'#dbeafe', borderRadius:8, fontSize:13, color:'#1e40af', fontWeight:700 }}>📐 {konvQty} {srcProd?.unit} {srcProd?.name} → {autoQty} {selTarget.product.unit} {selTarget.product.name}</div>
+                              : <FieldGroup label={`Qty Hasil (${selTarget.product.name})`}><input type="number" min="1" value={konvManualQty} onChange={e => setKonvManualQty(e.target.value)} style={S.input} placeholder={`Berapa ${selTarget.product.unit}?`} /></FieldGroup>
                             }
                           </div>
                         )}
                       </div>
                     )}
-                    {konvSrcId && convTargets.length === 0 && <div style={{ marginTop:10, padding:'10px 12px', background:'#fee2e2', borderRadius:8, fontSize:12, color:'#991b1b' }}>❌ Ukuran ini tidak bisa dikonversi.</div>}
+
+                    {/* ── Manual mode: no auto-target detected ── */}
+                    {konvSrcId && convTargets.length === 0 && (
+                      <div style={{ marginTop:14, padding:12, background:'#f8f7f4', borderRadius:10, border:'1px solid #e2e8f0' }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:'#374151', marginBottom:4 }}>✂️ Pilih Produk Hasil Konversi</div>
+                        <div style={{ fontSize:11, color:'#94a3b8', marginBottom:10 }}>Pilih manual karena nama produk tidak mengikuti format otomatis</div>
+                        <FieldGroup label="Produk Tujuan">
+                          <select value={konvTargetId} onChange={e => { setKonvTargetId(e.target.value); setKonvManualQty(''); }} style={S.input}>
+                            <option value=''>-- Pilih Produk --</option>
+                            {products.filter(p => p.id !== konvSrcId && p.kategori === srcProd?.kategori)
+                              .sort((a,b) => a.name.localeCompare(b.name))
+                              .map(p => <option key={p.id} value={p.id}>{p.name} (Stok: {currentStock[p.id]||0} {p.unit})</option>)
+                            }
+                          </select>
+                        </FieldGroup>
+                        {konvTargetId && (
+                          <div style={{ marginTop:10 }}>
+                            <FieldGroup label={`Qty Hasil (${products.find(p=>p.id===konvTargetId)?.unit||'unit'})`}>
+                              <input type="number" min="1" value={konvManualQty} onChange={e => setKonvManualQty(e.target.value)} style={S.input} placeholder="Masukkan jumlah hasil konversi" />
+                            </FieldGroup>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div style={{ marginTop:12 }}>
                       <FieldGroup label="Catatan (opsional)"><input value={konvNotes} onChange={e => setKonvNotes(e.target.value)} style={S.input} placeholder="Opsional..." /></FieldGroup>
                     </div>
