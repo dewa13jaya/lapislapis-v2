@@ -63,43 +63,72 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
-  // SMART: detect auto-ratio targets by name convention
-  // Returns [] if no match — caller falls back to MANUAL mode
+  // ── Konversi rules ────────────────────────────────────────────────────────
+  // Square = setara Loyang (bisa dikonversi). Round = produk tersendiri (❌).
+  // Konversi hanya boleh: RASA SAMA + UKURAN LEBIH KECIL.
+  const SIZE_RANK = { '':100, 'Loyang':100, 'Square':100, 'Half':50, 'Quarter':25, 'Slice':10 };
+  // Round tidak ada di SIZE_RANK → rank undefined → tidak bisa jadi source/target
+
+  const canConvert = size => (SIZE_RANK[size] ?? 0) > 10; // Slice (10) = terkecil, tidak bisa
+
   const getConversionTargets = (product) => {
     if (!product) return [];
     const size = getSizeName(product.name);
     const variant = getVariant(product.name);
     const kat = product.kategori;
-    // 1) Same-variant match (exact)
+
+    // Round & Slice & unknown → tidak bisa dikonversi
+    if (!canConvert(size)) return [];
+
+    // Target: HARUS same-variant (rasa sama), ukuran lebih kecil
     const sameVariant = products.filter(p => getVariant(p.name) === variant && p.id !== product.id);
-    // 2) Same-kategori fallback (different variant — e.g. Loyang Pandan → Half Mocca but same line)
-    const sameKat = products.filter(p => p.kategori === kat && p.id !== product.id);
-    const findSize = s => {
-      const exact = sameVariant.find(p => getSizeName(p.name).toLowerCase() === s.toLowerCase());
-      if (exact) return exact;
-      // Fallback: same kategori, same size keyword, share a common word in name
-      const varWords = variant.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-      return sameKat.find(p =>
-        getSizeName(p.name).toLowerCase() === s.toLowerCase() &&
-        varWords.some(w => p.name.toLowerCase().includes(w))
-      );
-    };
+    const srcRank = SIZE_RANK[size] ?? 100;
+    const find = s => sameVariant.find(p => getSizeName(p.name).toLowerCase() === s.toLowerCase());
+
     const targets = [];
+
     if (kat === 'Lapis Legit') {
-      if (size === 'Half') {
-        const qtr = findSize('Quarter'); if (qtr) targets.push({ product: qtr, label:'Quarter', ratio:2,    isAuto:true  });
-        const slc = findSize('Slice');   if (slc) targets.push({ product: slc, label:'Slice',   ratio:null, isAuto:false });
-      } else if (size === 'Quarter') {
-        const slc = findSize('Slice');   if (slc) targets.push({ product: slc, label:'Slice',   ratio:null, isAuto:false });
+      // Loyang / Square → Half ×2, Quarter ×4, Slice manual
+      if (srcRank >= SIZE_RANK['Square']) {
+        const half = find('Half');    if (half) targets.push({ product: half, label:'Half',    ratio:2,    isAuto:true  });
+        const qtr  = find('Quarter'); if (qtr)  targets.push({ product: qtr,  label:'Quarter', ratio:4,    isAuto:true  });
+        const slc  = find('Slice');   if (slc)  targets.push({ product: slc,  label:'Slice',   ratio:null, isAuto:false });
       }
-    } else if (kat === 'Lapis Surabaya') {
-      if (size === 'Loyang' || size === '') {
-        const half = findSize('Half');  if (half) targets.push({ product: half, label:'Half',  ratio:2,    isAuto:true  });
-        const slc  = findSize('Slice'); if (slc)  targets.push({ product: slc,  label:'Slice', ratio:null, isAuto:false });
-      } else if (size === 'Half') {
-        const slc = findSize('Slice');  if (slc) targets.push({ product: slc,  label:'Slice',  ratio:null, isAuto:false });
+      // Half → Quarter ×2, Slice manual
+      else if (size === 'Half') {
+        const qtr = find('Quarter'); if (qtr) targets.push({ product: qtr, label:'Quarter', ratio:2,    isAuto:true  });
+        const slc = find('Slice');   if (slc) targets.push({ product: slc, label:'Slice',   ratio:null, isAuto:false });
+      }
+      // Quarter → Slice manual
+      else if (size === 'Quarter') {
+        const slc = find('Slice'); if (slc) targets.push({ product: slc, label:'Slice', ratio:null, isAuto:false });
       }
     }
+
+    else if (kat === 'Lapis Surabaya') {
+      // Loyang → Half ×2, Slice manual
+      if (srcRank >= SIZE_RANK['Loyang']) {
+        const half = find('Half');  if (half) targets.push({ product: half, label:'Half',  ratio:2,    isAuto:true  });
+        const slc  = find('Slice'); if (slc)  targets.push({ product: slc,  label:'Slice', ratio:null, isAuto:false });
+      }
+      // Half → Slice manual
+      else if (size === 'Half') {
+        const slc = find('Slice'); if (slc) targets.push({ product: slc, label:'Slice', ratio:null, isAuto:false });
+      }
+    }
+
+    // Fallback: nama tidak ikut konvensi tapi size rank valid →
+    // tampilkan same-variant products dengan rank lebih kecil (manual, tanpa auto-ratio)
+    if (targets.length === 0) {
+      sameVariant
+        .filter(p => {
+          const ts = getSizeName(p.name);
+          const tr = SIZE_RANK[ts] ?? 0;
+          return tr > 0 && tr < srcRank;
+        })
+        .forEach(p => targets.push({ product: p, label: getSizeName(p.name)||p.name, ratio:null, isAuto:false }));
+    }
+
     return targets;
   };
 
@@ -362,8 +391,14 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                           <select value={konvSrcId} onChange={e => { setKonvSrcId(e.target.value); setKonvTargetId(''); setKonvManualQty(''); }} style={S.input}>
                             <option value=''>-- Pilih Ukuran --</option>
                             {sizesFor(konvVariant).map(p => {
-                              const sizeLbl = getSizeName(p.name) || 'Standard';
-                              return <option key={p.id} value={p.id}>{sizeLbl} — Stok: {currentStock[p.id]||0} {p.unit}</option>;
+                              const sz = getSizeName(p.name);
+                              const sizeLbl = sz || 'Loyang';
+                              const bisa = canConvert(sz);
+                              return (
+                                <option key={p.id} value={p.id} disabled={!bisa}>
+                                  {sizeLbl}{!bisa ? ' (tidak bisa dikonversi)' : ''} — Stok: {currentStock[p.id]||0} {p.unit}
+                                </option>
+                              );
                             })}
                           </select>
                         </FieldGroup>
@@ -409,27 +444,11 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                       </div>
                     )}
 
-                    {/* ── Manual mode: no auto-target detected ── */}
-                    {konvSrcId && convTargets.length === 0 && (
-                      <div style={{ marginTop:14, padding:12, background:'#f8f7f4', borderRadius:10, border:'1px solid #e2e8f0' }}>
-                        <div style={{ fontSize:12, fontWeight:700, color:'#374151', marginBottom:4 }}>✂️ Pilih Produk Hasil Konversi</div>
-                        <div style={{ fontSize:11, color:'#94a3b8', marginBottom:10 }}>Pilih manual karena nama produk tidak mengikuti format otomatis</div>
-                        <FieldGroup label="Produk Tujuan">
-                          <select value={konvTargetId} onChange={e => { setKonvTargetId(e.target.value); setKonvManualQty(''); }} style={S.input}>
-                            <option value=''>-- Pilih Produk --</option>
-                            {products.filter(p => p.id !== konvSrcId && p.kategori === srcProd?.kategori)
-                              .sort((a,b) => a.name.localeCompare(b.name))
-                              .map(p => <option key={p.id} value={p.id}>{p.name} (Stok: {currentStock[p.id]||0} {p.unit})</option>)
-                            }
-                          </select>
-                        </FieldGroup>
-                        {konvTargetId && (
-                          <div style={{ marginTop:10 }}>
-                            <FieldGroup label={`Qty Hasil (${products.find(p=>p.id===konvTargetId)?.unit||'unit'})`}>
-                              <input type="number" min="1" value={konvManualQty} onChange={e => setKonvManualQty(e.target.value)} style={S.input} placeholder="Masukkan jumlah hasil konversi" />
-                            </FieldGroup>
-                          </div>
-                        )}
+                    {/* ── Tidak ada target → produk target belum dibuat ── */}
+                    {konvSrcId && convTargets.length === 0 && canConvert(getSizeName(srcProd?.name||'')) && (
+                      <div style={{ marginTop:14, padding:'12px 14px', background:'#fff7ed', borderRadius:10, border:'1px solid #fed7aa', fontSize:12, color:'#9a3412' }}>
+                        ⚠️ Produk hasil konversi belum ada di database.<br/>
+                        <span style={{ fontWeight:600 }}>Contoh:</span> untuk konversi "{srcProd?.name}", tambahkan produk "{getVariant(srcProd?.name||'')} Half" atau "{getVariant(srcProd?.name||'')} Slice" di menu Produk.
                       </div>
                     )}
                     <div style={{ marginTop:12 }}>
