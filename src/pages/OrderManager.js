@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 import { uid, today, fmtDate, S, REJECT_REASONS, STATUS_CFG } from '../utils';
@@ -10,7 +10,7 @@ const logActivity = async (user, action, description) => {
   await supabase.from('activity_log').insert({ id: uid(), user_id: user.id, user_name: user.name, action, description });
 };
 
-export default function OrderManager({ products, outlets, orders, currentStock, onRefresh, showToast }) {
+export default function OrderManager({ products, outlets, orders, currentStock, onRefresh, refreshOrders, refreshReturns, showToast }) {
   const { user } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [showRejectForm, setShowRejectForm] = useState(null);
@@ -34,6 +34,12 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
 
   const canCreate  = ['admin','sales','kepala_sales'].includes(user?.role);
   const canStatus  = ['admin','produksi','kepala_produksi'].includes(user?.role);
+
+  // Outlet filter by assignment: sales only sees their assigned outlets
+  const assignedOutletIds = user?.outlet_ids || [];
+  const availableOutlets = (user?.role === 'sales' && assignedOutletIds.length > 0)
+    ? outlets.filter(o => assignedOutletIds.includes(o.id))
+    : outlets;
 
   const addItem = () => {
     if (!newItem.product_id || !newItem.qty) return;
@@ -62,7 +68,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
     setForm({ outlet_id:'', delivery_date: today(), notes:'', items:[] });
     setNewItem({ kat:'', variant:'', product_id:'', qty:'' });
     setShowForm(false);
-    onRefresh();
+    refreshOrders();
   };
 
   const updateStatus = async (order, status) => {
@@ -83,7 +89,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       await logActivity(user, 'order_status', `Order ${order.order_no} → ${STATUS_CFG[status]?.label}`);
     }
     showToast('✅ Status diupdate');
-    onRefresh();
+    refreshOrders();
   };
 
   const rescheduleOrder = async (order) => {
@@ -99,7 +105,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
     }).eq('id', order.id);
     await logActivity(user, 'order_reschedule', `Order ${order.order_no} — jadwal kirim diubah: ${oldDate} → ${newDate}${note ? '. Alasan: ' + note : ''}`);
     showToast(`✅ Jadwal diubah ke ${newDate}`);
-    onRefresh();
+    refreshOrders();
   };
 
   const submitReject = async (order) => {
@@ -126,10 +132,10 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
     setShowRejectForm(null);
     setRejectData({});
     showToast('✅ Konfirmasi penerimaan tersimpan');
-    onRefresh();
+    refreshOrders(); refreshReturns();
   };
 
-  const filteredOrders = orders
+  const filteredOrders = useMemo(() => orders
     .filter(o => filter === 'all' || o.status === filter)
     .filter(o => {
       if (!search) return true;
@@ -146,7 +152,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       if (sortBy === 'newest') return b.delivery_date.localeCompare(a.delivery_date) || b.order_no.localeCompare(a.order_no);
       if (sortBy === 'oldest') return a.delivery_date.localeCompare(b.delivery_date) || a.order_no.localeCompare(b.order_no);
       return 0;
-    });
+    }), [orders, filter, search, dateFrom, dateTo, sortBy, outlets]);
 
   // Show ProductionDetail full page
   if (productionOrder) {
@@ -157,7 +163,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
         outlets={outlets}
         currentStock={currentStock}
         onBack={() => setProductionOrder(null)}
-        onRefresh={onRefresh}
+        onRefresh={refreshOrders}
         showToast={showToast}
       />
     );
@@ -178,8 +184,11 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
             <FieldGroup label="Outlet Tujuan">
               <select value={form.outlet_id} onChange={e => setForm(f => ({...f, outlet_id: e.target.value}))} style={S.input}>
                 <option value=''>-- Pilih --</option>
-                {outlets.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                {availableOutlets.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
+              {user?.role === 'sales' && assignedOutletIds.length === 0 && (
+                <div style={{ fontSize:11, color:'#ef4444', marginTop:4 }}>⚠️ Akun kamu belum di-assign ke outlet. Hubungi admin.</div>
+              )}
             </FieldGroup>
             <FieldGroup label="Tanggal Kirim">
               <input type="date" value={form.delivery_date} onChange={e => setForm(f => ({...f, delivery_date: e.target.value}))} style={S.input} />

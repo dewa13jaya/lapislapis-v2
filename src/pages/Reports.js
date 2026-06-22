@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { fmtDate, today, useIsMobile } from '../utils';
 
@@ -96,10 +96,11 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
 
   const resetFilters = () => { setFilterOutlet(''); setFilterKat(''); setFilterProduk(''); setFilterUkuran(''); };
 
-  // ── Shared: orders in date range (non-cancelled) ─────────────────────────
-  const rangeOrders = orders.filter(o =>
+  // ── Shared: orders in date range (non-cancelled) — useMemo ─────────────────
+  const rangeOrders = useMemo(() => orders.filter(o =>
     !['cancelled'].includes(o.status) && inRange(o.delivery_date)
-  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [orders, dateFrom, dateTo]);
 
   // ── TAB 1: Order per Outlet ───────────────────────────────────────────────
   const outletReport = visibleOutlets
@@ -175,8 +176,8 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
     })
     .sort((a,b) => b.tglRencana.localeCompare(a.tglRencana));
 
-  // ── TAB 4: Stok ───────────────────────────────────────────────────────────
-  const stokData = products
+  // ── TAB 4: Stok — useMemo ────────────────────────────────────────────────
+  const stokData = useMemo(() => products
     .filter(p => !filterKat || p.kategori === filterKat)
     .filter(p => matchUkuran(p))
     .map(p => {
@@ -184,7 +185,9 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
       const keluar = stockOut.filter(x => x.product_id === p.id && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
       const retur  = returns.filter(x => x.product_id === p.id && inRange(x.date) && !['expired_rusak','konversi'].includes(x.return_type)).reduce((s,x) => s+Number(x.qty), 0);
       return { product: p, masuk, keluar, retur, saldo: currentStock[p.id] || 0 };
-    });
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  , [products, stockIn, stockOut, returns, currentStock, dateFrom, dateTo, filterKat, filterUkuran]);
 
   // ── TAB RETUR: Analisis Retur ─────────────────────────────────────────────
   const returInRange = returns.filter(r => inRange(r.date));

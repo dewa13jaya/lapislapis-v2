@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 import { uid, today, fmtDate, S, DEFECT_REASONS, RETUR_REASONS, useIsMobile } from '../utils';
@@ -8,7 +8,7 @@ const logActivity = async (user, action, description) => {
   await supabase.from('activity_log').insert({ id: uid(), user_id: user.id, user_name: user.name, action, description });
 };
 
-export default function StockManager({ products, outlets, stockIn, stockOut, returns, orders, currentStock, onRefresh, showToast }) {
+export default function StockManager({ products, outlets, stockIn, stockOut, returns, orders, currentStock, onRefresh, refreshStockIn, refreshStockOut, refreshReturns, showToast }) {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const [mainTab, setMainTab] = useState('input');
@@ -188,7 +188,7 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
     if (errors > 0) showToast(`⚠️ ${errors} item gagal`);
     else showToast(`✅ ${entries.length} produk berhasil disimpan!`);
     setMassQty({});
-    onRefresh();
+    refreshStockIn();
   };
 
   // ── Variant sort order matching WA recap format ────────────────────────────
@@ -445,7 +445,10 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
     else showToast(`✅ ${cart.length} item berhasil disimpan!`);
     setCart([]);
     resetItemForm();
-    onRefresh();
+    // Targeted refresh: hanya fetch tabel yang berubah
+    if (activeTab === 'in')      refreshStockIn();
+    else if (activeTab === 'out') refreshStockOut();
+    else if (activeTab === 'retur') { refreshReturns(); refreshStockIn(); }
   };
 
   // ── Konversi Stok (unchanged) ──────────────────────────────────────────────
@@ -468,7 +471,8 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
     showToast(`✅ ${konvQty} ${srcProduct?.unit} ${srcProduct?.name} → ${finalQty} ${targetProduct?.unit} ${targetProduct?.name}`);
     setSaving(false);
     setKonvKat(''); setKonvVariant(''); setKonvSrcId(''); setKonvQty(''); setKonvTargetId(''); setKonvManualQty(''); setKonvNotes(''); setKonvDate(today());
-    onRefresh();
+    // Konversi: stock_out dari sumber + stock_in ke target
+    refreshStockOut(); refreshStockIn();
   };
 
   const activeData = activeTab === 'in' ? stockIn
@@ -476,20 +480,22 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
     : activeTab === 'konversi' ? stockOut.filter(x => x.out_type === 'konversi')
     : returns;
 
-  // Stock summary — pergerakan difilter per periode, saldo tetap all-time
-  const inRange = d => {
-    const dt = (d||'').slice(0,10);
-    return (!summaryFrom || dt >= summaryFrom) && (!summaryTo || dt <= summaryTo);
-  };
-  const stockSummary = products.map(p => {
-    const totalIn    = stockIn.filter(x => x.product_id === p.id && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
-    const totalOut   = stockOut.filter(x => x.product_id === p.id && x.out_type !== 'konversi' && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
-    const totalRetur = returns.filter(x => x.product_id === p.id && !['expired_rusak','konversi'].includes(x.return_type) && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
-    const orderOut   = orders.filter(o => ['delivered','partial_delivered'].includes(o.status) && inRange(o.actual_delivery_date || o.delivery_date))
-      .flatMap(o => o.order_items||[]).filter(i => i.product_id === p.id)
-      .reduce((s,i) => s+Number(i.qty_delivered??i.qty), 0);
-    return { ...p, totalIn, totalOut, totalRetur, orderOut, saldo: currentStock[p.id] || 0 };
-  });
+  // Stock summary — useMemo: recompute hanya saat data atau filter periode berubah
+  const stockSummary = useMemo(() => {
+    const inRange = d => {
+      const dt = (d||'').slice(0,10);
+      return (!summaryFrom || dt >= summaryFrom) && (!summaryTo || dt <= summaryTo);
+    };
+    return products.map(p => {
+      const totalIn    = stockIn.filter(x => x.product_id === p.id && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
+      const totalOut   = stockOut.filter(x => x.product_id === p.id && x.out_type !== 'konversi' && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
+      const totalRetur = returns.filter(x => x.product_id === p.id && !['expired_rusak','konversi'].includes(x.return_type) && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
+      const orderOut   = orders.filter(o => ['delivered','partial_delivered'].includes(o.status) && inRange(o.actual_delivery_date || o.delivery_date))
+        .flatMap(o => o.order_items||[]).filter(i => i.product_id === p.id)
+        .reduce((s,i) => s+Number(i.qty_delivered??i.qty), 0);
+      return { ...p, totalIn, totalOut, totalRetur, orderOut, saldo: currentStock[p.id] || 0 };
+    });
+  }, [products, stockIn, stockOut, returns, orders, currentStock, summaryFrom, summaryTo]);
 
   // Product selector helpers for item form
   const formProduct = products.find(p => p.id === formProductId);

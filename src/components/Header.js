@@ -71,9 +71,9 @@ export default function Header({ tab, setTab }) {
           <div style={{ display:'flex', gap:2, marginTop:12, overflowX:'auto', paddingBottom:0 }}>
             {tabs.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
-                padding:'9px 14px', background: tab===t ? '#B49A35' : 'transparent',
+                padding:'10px 18px', background: tab===t ? '#B49A35' : 'transparent',
                 color: tab===t ? '#1C1208' : '#94a3b8', border:'none', borderRadius:'8px 8px 0 0',
-                cursor:'pointer', fontWeight: tab===t ? 700 : 500, fontSize:11, whiteSpace:'nowrap', transition:'all .15s'
+                cursor:'pointer', fontWeight: tab===t ? 700 : 500, fontSize:13, whiteSpace:'nowrap', transition:'all .15s'
               }}>{TAB_LABELS[t]}</button>
             ))}
           </div>

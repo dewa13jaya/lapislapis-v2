@@ -7,7 +7,7 @@ import { RoleBadge, Btn, FieldGroup } from '../components/UI';
 // ─── STAFF MANAGER ────────────────────────────────────────────────────────────
 const SALES_ROLES = ['sales', 'kepala_sales'];
 
-export function StaffManager({ staff, outlets, onRefresh, showToast }) {
+export function StaffManager({ staff, outlets, onRefresh, refreshStaff, showToast }) {
   const [form, setForm] = useState({ name:'', role:'produksi', pin:'', phone:'', outlet_ids:[] });
   const [editPin, setEditPin] = useState({});
   const [editPhone, setEditPhone] = useState({});
@@ -29,13 +29,13 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Staff ' + form.name + ' berhasil ditambahkan');
     setForm({ name:'', role:'produksi', pin:'', phone:'', outlet_ids:[] });
-    onRefresh();
+    refreshStaff();
   };
 
   const toggleActive = async (s) => {
     await supabase.from('users_profile').update({ is_active: !s.is_active }).eq('id', s.id);
     showToast(`✅ ${s.name} ${s.is_active ? 'dinonaktifkan' : 'diaktifkan'}`);
-    onRefresh();
+    refreshStaff();
   };
 
   const deleteStaff = async (s) => {
@@ -43,7 +43,7 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     const { error } = await supabase.from('users_profile').delete().eq('id', s.id);
     if (error) return showToast('❌ ' + error.message);
     showToast(`✅ Staff ${s.name} dihapus`);
-    onRefresh();
+    refreshStaff();
   };
 
   const resetPin = async (s) => {
@@ -52,7 +52,7 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     await supabase.from('users_profile').update({ pin: newPin }).eq('id', s.id);
     setEditPin(p => { const n = {...p}; delete n[s.id]; return n; });
     showToast('✅ PIN ' + s.name + ' berhasil direset');
-    onRefresh();
+    refreshStaff();
   };
 
   const savePhone = async (s) => {
@@ -60,7 +60,7 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     await supabase.from('users_profile').update({ phone: phone || null }).eq('id', s.id);
     setEditPhone(p => { const n = {...p}; delete n[s.id]; return n; });
     showToast('✅ No. HP ' + s.name + ' disimpan');
-    onRefresh();
+    refreshStaff();
   };
 
   const changeRole = async (s, role) => {
@@ -69,7 +69,7 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     if (!SALES_ROLES.includes(role)) update.outlet_ids = [];
     await supabase.from('users_profile').update(update).eq('id', s.id);
     showToast('✅ Role ' + s.name + ' diubah ke ' + role);
-    onRefresh();
+    refreshStaff();
   };
 
   const saveOutlets = async (s) => {
@@ -77,7 +77,7 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     await supabase.from('users_profile').update({ outlet_ids: ids }).eq('id', s.id);
     setEditOutlets(p => { const n = {...p}; delete n[s.id]; return n; });
     showToast('✅ Outlet assignment ' + s.name + ' tersimpan');
-    onRefresh();
+    refreshStaff();
   };
 
   const toggleFormOutlet = (outletId) => {
@@ -329,7 +329,7 @@ export function ActivityLog({ activityLog, staff }) {
 }
 
 // ─── PRODUCT MANAGER ──────────────────────────────────────────────────────────
-export function ProductManager({ products, onRefresh, showToast }) {
+export function ProductManager({ products, onRefresh, refreshProducts, showToast }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [form, setForm] = useState({ name:'', unit:'loyang', price:'', kategori:'', expired_duration:'', stok_minimum:'5' });
@@ -353,7 +353,7 @@ export function ProductManager({ products, onRefresh, showToast }) {
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Produk berhasil ditambahkan');
     setForm({ name:'', unit:'loyang', price:'', kategori:'', expired_duration:'', stok_minimum:'5' });
-    onRefresh();
+    refreshProducts();
   };
 
   const deleteProduct = async (id) => {
@@ -361,7 +361,7 @@ export function ProductManager({ products, onRefresh, showToast }) {
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Produk dihapus');
-    onRefresh();
+    refreshProducts();
   };
 
   // Filter
@@ -512,7 +512,7 @@ export function ProductManager({ products, onRefresh, showToast }) {
 }
 
 // ─── OUTLET MANAGER ───────────────────────────────────────────────────────────
-export function OutletManager({ outlets, onRefresh, showToast }) {
+export function OutletManager({ outlets, onRefresh, refreshOutlets, showToast }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const emptyForm = { name:'', address:'', phone:'', pic_name:'', pic_phone:'', notes:'', jam_operasional:'' };
@@ -529,7 +529,7 @@ export function OutletManager({ outlets, onRefresh, showToast }) {
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Outlet berhasil ditambahkan');
     setForm(emptyForm);
-    onRefresh();
+    refreshOutlets();
   };
 
   const startEdit = (o) => {
@@ -544,7 +544,7 @@ export function OutletManager({ outlets, onRefresh, showToast }) {
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Outlet diupdate');
     setEditId(null);
-    onRefresh();
+    refreshOutlets();
   };
 
   const deleteOutlet = async (id, name) => {
@@ -557,7 +557,7 @@ export function OutletManager({ outlets, onRefresh, showToast }) {
     const { error } = await supabase.from('outlets').delete().eq('id', id);
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Outlet dihapus');
-    onRefresh();
+    refreshOutlets();
   };
 
   return (

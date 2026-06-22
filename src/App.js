@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useIsMobile } from './utils';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { supabase } from './supabase';
@@ -30,53 +30,115 @@ function MainApp() {
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(''), 3500); };
 
-  const fetchAll = useCallback(async () => {
-    // Don't setLoading(true) here — only the initial useState(true) blocks UI.
-    // Subsequent refreshes (realtime, manual) update data silently in background.
-    const [p, o, si, so, r, ord, st, al] = await Promise.all([
-      supabase.from('products').select('*').order('name'),
-      supabase.from('outlets').select('*').order('name'),
-      supabase.from('stock_in').select('*').order('created_at', { ascending: false }),
-      supabase.from('stock_out').select('*').order('created_at', { ascending: false }),
-      supabase.from('returns').select('*').order('created_at', { ascending: false }),
-      supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }),
-      supabase.from('users_profile').select('*').order('name'),
-      supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(200),
-    ]);
-    if (p.data)   setProducts(p.data);
-    if (o.data)   setOutlets(o.data);
-    if (si.data)  setStockIn(si.data);
-    if (so.data)  setStockOut(so.data);
-    if (r.data)   setReturns(r.data);
-    if (ord.data) setOrders(ord.data);
-    if (st.data)  setStaff(st.data);
-    if (al.data)  setActivityLog(al.data);
-    setLoading(false);
+  // ── Per-table fetch functions ──────────────────────────────────────────────
+  // Tiap fungsi hanya fetch tabelnya sendiri → realtime bisa trigger granular.
+  const fetchProducts = useCallback(async () => {
+    const { data } = await supabase.from('products').select('*').order('name');
+    if (data) setProducts(data);
   }, []);
+
+  const fetchOutlets = useCallback(async () => {
+    const { data } = await supabase.from('outlets').select('*').order('name');
+    if (data) setOutlets(data);
+  }, []);
+
+  const fetchStockIn = useCallback(async () => {
+    const { data } = await supabase.from('stock_in').select('*').order('created_at', { ascending: false });
+    if (data) setStockIn(data);
+  }, []);
+
+  const fetchStockOut = useCallback(async () => {
+    const { data } = await supabase.from('stock_out').select('*').order('created_at', { ascending: false });
+    if (data) setStockOut(data);
+  }, []);
+
+  const fetchReturns = useCallback(async () => {
+    const { data } = await supabase.from('returns').select('*').order('created_at', { ascending: false });
+    if (data) setReturns(data);
+  }, []);
+
+  const fetchOrders = useCallback(async () => {
+    const { data } = await supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false });
+    if (data) setOrders(data);
+  }, []);
+
+  const fetchStaff = useCallback(async () => {
+    const { data } = await supabase.from('users_profile').select('*').order('name');
+    if (data) setStaff(data);
+  }, []);
+
+  const fetchActivityLog = useCallback(async () => {
+    const { data } = await supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(200);
+    if (data) setActivityLog(data);
+  }, []);
+
+  // fetchAll: initial load & manual full-refresh
+  const fetchAll = useCallback(async () => {
+    await Promise.all([
+      fetchProducts(), fetchOutlets(), fetchStockIn(), fetchStockOut(),
+      fetchReturns(), fetchOrders(), fetchStaff(), fetchActivityLog(),
+    ]);
+    setLoading(false);
+  }, [fetchProducts, fetchOutlets, fetchStockIn, fetchStockOut, fetchReturns, fetchOrders, fetchStaff, fetchActivityLog]);
 
   useEffect(() => { if (user) fetchAll(); }, [user, fetchAll]);
 
-  // Realtime
+  // ── Granular realtime ──────────────────────────────────────────────────────
+  // Sebelumnya: semua event → fetchAll() (8 tabel sekaligus, tiap ada perubahan apapun).
+  // Sekarang: tiap tabel hanya fetch dirinya sendiri.
+  // order_items → fetchOrders (karena join).
   useEffect(() => {
     if (!user) return;
-    const tables = ['products','outlets','stock_in','stock_out','returns','orders','order_items','users_profile','activity_log'];
-    const channels = tables.map(table =>
-      supabase.channel(`rt-${table}`).on('postgres_changes', { event: '*', schema: 'public', table }, () => fetchAll()).subscribe()
+    const tableHandlers = {
+      products:      fetchProducts,
+      outlets:       fetchOutlets,
+      stock_in:      fetchStockIn,
+      stock_out:     fetchStockOut,
+      returns:       fetchReturns,
+      orders:        fetchOrders,
+      order_items:   fetchOrders,   // join → fetch orders
+      users_profile: fetchStaff,
+      activity_log:  fetchActivityLog,
+    };
+    const channels = Object.entries(tableHandlers).map(([table, handler]) =>
+      supabase.channel(`rt-${table}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table }, handler)
+        .subscribe()
     );
     return () => channels.forEach(c => supabase.removeChannel(c));
-  }, [user, fetchAll]);
+  }, [user, fetchProducts, fetchOutlets, fetchStockIn, fetchStockOut, fetchReturns, fetchOrders, fetchStaff, fetchActivityLog]);
 
-  // Computed stock
-  const currentStock = products.reduce((acc, p) => {
-    const totalIn    = stockIn.filter(x => x.product_id === p.id).reduce((s,x) => s+Number(x.qty), 0);
-    const totalOut   = stockOut.filter(x => x.product_id === p.id).reduce((s,x) => s+Number(x.qty), 0);
-    const totalRetur = returns.filter(x => x.product_id === p.id && !['expired_rusak','konversi'].includes(x.return_type)).reduce((s,x) => s+Number(x.qty), 0);
-    const orderOut   = orders.filter(o => ['delivered','partial_delivered'].includes(o.status))
-      .flatMap(o => o.order_items||[]).filter(i => i.product_id === p.id)
-      .reduce((s,i) => s+Number(i.qty_delivered??i.qty), 0);
-    acc[p.id] = totalIn + totalRetur - totalOut - orderOut;
-    return acc;
-  }, {});
+  // ── currentStock — O(n+m) single-pass Map ─────────────────────────────────
+  // Sebelumnya: O(n×m) — untuk tiap produk, .filter() ulang seluruh array stok.
+  // Sekarang: satu kali pass per array → Map lookup O(1).
+  const currentStock = useMemo(() => {
+    const inMap     = {};
+    const outMap    = {};
+    const returMap  = {};
+    const orderMap  = {};
+
+    stockIn.forEach(x => {
+      inMap[x.product_id] = (inMap[x.product_id] || 0) + Number(x.qty);
+    });
+    stockOut.forEach(x => {
+      outMap[x.product_id] = (outMap[x.product_id] || 0) + Number(x.qty);
+    });
+    returns.forEach(x => {
+      if (!['expired_rusak', 'konversi'].includes(x.return_type))
+        returMap[x.product_id] = (returMap[x.product_id] || 0) + Number(x.qty);
+    });
+    orders
+      .filter(o => ['delivered', 'partial_delivered'].includes(o.status))
+      .flatMap(o => o.order_items || [])
+      .forEach(i => {
+        orderMap[i.product_id] = (orderMap[i.product_id] || 0) + Number(i.qty_delivered ?? i.qty);
+      });
+
+    return products.reduce((acc, p) => {
+      acc[p.id] = (inMap[p.id] || 0) + (returMap[p.id] || 0) - (outMap[p.id] || 0) - (orderMap[p.id] || 0);
+      return acc;
+    }, {});
+  }, [products, stockIn, stockOut, returns, orders]);
 
   if (!user) return <LoginPage />;
 
@@ -88,7 +150,20 @@ function MainApp() {
     </div>
   );
 
-  const pageProps = { products, outlets, stockIn, stockOut, returns, orders, staff, activityLog, currentStock, onRefresh: fetchAll, showToast };
+  const pageProps = {
+    products, outlets, stockIn, stockOut, returns, orders, staff, activityLog, currentStock,
+    onRefresh: fetchAll,
+    // Targeted refresh — post-mutation panggil ini bukan onRefresh()
+    // Hanya re-fetch tabel yang berubah, bukan semua 8 tabel.
+    refreshProducts:  fetchProducts,
+    refreshOutlets:   fetchOutlets,
+    refreshStockIn:   fetchStockIn,
+    refreshStockOut:  fetchStockOut,
+    refreshReturns:   fetchReturns,
+    refreshOrders:    fetchOrders,
+    refreshStaff:     fetchStaff,
+    showToast,
+  };
 
   return (
     <div style={{ minHeight:'100vh', background:'#f8f7f4', fontFamily:"'Inter','Segoe UI',sans-serif" }}>

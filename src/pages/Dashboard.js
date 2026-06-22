@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/UI';
 import { fmtDate, today, STATUS_CFG, useIsMobile } from '../utils';
@@ -85,42 +86,47 @@ function HBarChart({ data, max }) {
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
+// Konstanta di luar component → stable reference, tidak trigger useMemo tiap render
+const STATUS_COLORS = {
+  pending:           '#B49A35',
+  confirmed:         '#3b82f6',
+  packed:            '#8b5cf6',
+  delivered:         '#10b981',
+  partial_delivered: '#0ea5e9',
+  cancelled:         '#ef4444',
+  rejected:          '#dc2626',
+};
 
 export default function Dashboard({ products, currentStock, orders, stockIn, returns, outlets, stockOut }) {
   const { user } = useAuth();
   const isMobile = useIsMobile();
+  const [alertExpanded, setAlertExpanded] = useState(false);
 
   const todayStr = today();
-  const STATUS_COLORS = {
-    pending:           '#B49A35',
-    confirmed:         '#3b82f6',
-    packed:            '#8b5cf6',
-    delivered:         '#10b981',
-    partial_delivered: '#0ea5e9',
-    cancelled:         '#ef4444',
-    rejected:          '#dc2626',
-  };
 
-  // ── Stat cards ───────────────────────────────────────────────────────────────
-  const pendingOrders  = orders.filter(o => o.status === 'pending').length;
-  const confirmedOrders = orders.filter(o => o.status === 'confirmed').length;
-  const packedOrders   = orders.filter(o => o.status === 'packed').length;
-  const todayOrders    = orders.filter(o => o.created_at?.slice(0, 10) === todayStr).length;
-  const deliveredToday = orders.filter(o => o.status === 'delivered' && o.updated_at?.slice(0, 10) === todayStr).length;
-  const lowStock  = products.filter(p => { const s = currentStock[p.id] || 0; return s > 0 && s <= (p.stok_minimum || 5); }).length;
-  const emptyStock = products.filter(p => (currentStock[p.id] || 0) <= 0).length;
+  // ── All derived values — useMemo: recompute hanya saat data berubah ─────────
+  // Sebelumnya semua ini recompute tiap render (termasuk saat alertExpanded toggle).
+  const {
+    pendingOrders, confirmedOrders, packedOrders, todayOrders, deliveredToday,
+    lowStock, emptyStock, cards, trendData, statusGroups, top5, top5max, stockWarnings, recentOrders,
+  } = useMemo(() => {
+    const pendingOrders   = orders.filter(o => o.status === 'pending').length;
+    const confirmedOrders = orders.filter(o => o.status === 'confirmed').length;
+    const packedOrders    = orders.filter(o => o.status === 'packed').length;
+    const todayOrders     = orders.filter(o => o.created_at?.slice(0, 10) === todayStr).length;
+    const deliveredToday  = orders.filter(o => o.status === 'delivered' && o.updated_at?.slice(0, 10) === todayStr).length;
+    const lowStock   = products.filter(p => { const s = currentStock[p.id] || 0; return s > 0 && s <= (p.stok_minimum || 5); }).length;
+    const emptyStock = products.filter(p => (currentStock[p.id] || 0) <= 0).length;
 
-  const cards = [
-    { label: 'Menunggu Konfirmasi', value: pendingOrders,   icon: '⏳', color: '#B49A35', sub: 'order pending' },
-    { label: 'Proses Produksi',     value: confirmedOrders, icon: '🔨', color: '#3b82f6', sub: 'dikonfirmasi' },
-    { label: 'Siap Dikirim',        value: packedOrders,    icon: '📦', color: '#8b5cf6', sub: 'packed' },
-    { label: 'Stok Butuh Perhatian',value: lowStock + emptyStock, icon: '⚠️', color: '#ef4444', sub: `${emptyStock} habis · ${lowStock} hampir habis` },
-  ];
+    const cards = [
+      { label: 'Menunggu Konfirmasi', value: pendingOrders,   icon: '⏳', color: '#B49A35', sub: 'order pending' },
+      { label: 'Proses Produksi',     value: confirmedOrders, icon: '🔨', color: '#3b82f6', sub: 'dikonfirmasi' },
+      { label: 'Siap Dikirim',        value: packedOrders,    icon: '📦', color: '#8b5cf6', sub: 'packed' },
+      { label: 'Stok Butuh Perhatian',value: lowStock + emptyStock, icon: '⚠️', color: '#ef4444', sub: `${emptyStock} habis · ${lowStock} hampir habis` },
+    ];
 
-  // ── Trend 4 minggu terakhir ───────────────────────────────────────────────
-  const trendData = (() => {
     const now = new Date(todayStr);
-    return [3, 2, 1, 0].map(weeksAgo => {
+    const trendData = [3, 2, 1, 0].map(weeksAgo => {
       const end = new Date(now); end.setDate(end.getDate() - weeksAgo * 7);
       const start = new Date(end); start.setDate(start.getDate() - 6);
       const endStr = end.toISOString().slice(0, 10);
@@ -132,39 +138,34 @@ export default function Dashboard({ products, currentStock, orders, stockIn, ret
       const label = start.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
       return { label, v: count };
     });
-  })();
 
-  // ── Status donut (hari ini) ───────────────────────────────────────────────
-  const todayOrdersList = orders.filter(o => o.created_at?.slice(0, 10) === todayStr);
-  const statusGroups = Object.entries(
-    todayOrdersList.reduce((acc, o) => { acc[o.status] = (acc[o.status] || 0) + 1; return acc; }, {})
-  ).map(([status, v]) => ({ label: STATUS_CFG[status]?.label || status, v, color: STATUS_COLORS[status] || '#94a3b8' }));
+    const todayOrdersList = orders.filter(o => o.created_at?.slice(0, 10) === todayStr);
+    const statusGroups = Object.entries(
+      todayOrdersList.reduce((acc, o) => { acc[o.status] = (acc[o.status] || 0) + 1; return acc; }, {})
+    ).map(([status, v]) => ({ label: STATUS_CFG[status]?.label || status, v, color: STATUS_COLORS[status] || '#94a3b8' }));
 
-  // ── Top 5 produk terlaris (dari order_items semua orders) ────────────────
-  const top5 = (() => {
     const totals = {};
     orders.forEach(o => {
       (o.order_items || []).forEach(item => {
-        if (!['cancelled','rejected'].includes(o.status)) {
+        if (!['cancelled','rejected'].includes(o.status))
           totals[item.product_id] = (totals[item.product_id] || 0) + Number(item.qty_delivered ?? item.qty ?? 0);
-        }
       });
     });
-    return Object.entries(totals)
+    const top5 = Object.entries(totals)
       .map(([pid, v]) => ({ label: products.find(p => p.id === pid)?.name || pid, v }))
       .sort((a, b) => b.v - a.v)
       .slice(0, 5);
-  })();
-  const top5max = top5[0]?.v || 1;
+    const top5max = top5[0]?.v || 1;
 
-  // ── Stok warning list ────────────────────────────────────────────────────
-  const stockWarnings = products
-    .map(p => ({ ...p, saldo: currentStock[p.id] || 0 }))
-    .filter(p => p.saldo <= (p.stok_minimum || 5))
-    .sort((a, b) => a.saldo - b.saldo);
+    const stockWarnings = products
+      .map(p => ({ ...p, saldo: currentStock[p.id] || 0 }))
+      .filter(p => p.saldo <= (p.stok_minimum || 5))
+      .sort((a, b) => a.saldo - b.saldo);
 
-  // ── Recent orders (today or latest 5) ────────────────────────────────────
-  const recentOrders = [...orders].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 6);
+    const recentOrders = [...orders].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 6);
+
+    return { pendingOrders, confirmedOrders, packedOrders, todayOrders, deliveredToday, lowStock, emptyStock, cards, trendData, statusGroups, top5, top5max, stockWarnings, recentOrders };
+  }, [orders, products, currentStock, todayStr]);
 
   // ── WhatsApp Recap ────────────────────────────────────────────────────────
   const sendWhatsAppRecap = () => {
@@ -213,15 +214,64 @@ export default function Dashboard({ products, currentStock, orders, stockIn, ret
       </div>
 
       {/* ── Alert stok habis ── */}
-      {emptyStock > 0 && (
-        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 10, padding: '10px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 18 }}>🚨</span>
-          <div>
-            <div style={{ fontWeight: 700, color: '#991b1b', fontSize: 13 }}>{emptyStock} produk stok habis!</div>
-            <div style={{ fontSize: 11, color: '#b91c1c' }}>{products.filter(p => (currentStock[p.id] || 0) <= 0).map(p => p.name).join(' · ')}</div>
+      {emptyStock > 0 && (() => {
+        const emptyProds = products.filter(p => (currentStock[p.id] || 0) <= 0);
+        const groups = {};
+        emptyProds.forEach(p => {
+          const k = p.kategori || 'Lainnya';
+          if (!groups[k]) groups[k] = [];
+          groups[k].push(p);
+        });
+        const KAT_COLOR = {
+          'Lapis Legit':    { bg:'#fef3c7', text:'#92400e', border:'#fbbf24' },
+          'Lapis Surabaya': { bg:'#dbeafe', text:'#1e40af', border:'#93c5fd' },
+          'Cookies':        { bg:'#fce7f3', text:'#9d174d', border:'#f9a8d4' },
+          'Gift Box':       { bg:'#d1fae5', text:'#065f46', border:'#6ee7b7' },
+        };
+        return (
+          <div style={{ background:'#fff5f5', border:'1.5px solid #fca5a5', borderRadius:12, marginBottom:16, overflow:'hidden' }}>
+            {/* Header row */}
+            <div
+              onClick={() => setAlertExpanded(e => !e)}
+              style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', cursor:'pointer', userSelect:'none' }}
+            >
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:16 }}>🚨</span>
+                <span style={{ fontWeight:700, color:'#991b1b', fontSize:13 }}>{emptyStock} produk stok habis</span>
+                <span style={{ fontSize:11, color:'#b91c1c', background:'#fee2e2', padding:'2px 8px', borderRadius:10 }}>
+                  {Object.keys(groups).length} kategori
+                </span>
+              </div>
+              <span style={{ fontSize:12, color:'#991b1b', fontWeight:600 }}>{alertExpanded ? '▲ Tutup' : '▼ Lihat'}</span>
+            </div>
+            {/* Expanded: grouped chips */}
+            {alertExpanded && (
+              <div style={{ borderTop:'1px solid #fca5a5', padding:'12px 14px', display:'flex', flexDirection:'column', gap:10 }}>
+                {Object.entries(groups).sort().map(([kat, prods]) => {
+                  const c = KAT_COLOR[kat] || { bg:'#f1f5f9', text:'#334155', border:'#cbd5e1' };
+                  return (
+                    <div key={kat}>
+                      <div style={{ fontSize:10, fontWeight:700, color:'#991b1b', marginBottom:5, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+                        {kat} ({prods.length})
+                      </div>
+                      <div style={{ display:'flex', flexWrap:'wrap', gap:5 }}>
+                        {prods.map(p => (
+                          <span key={p.id} style={{
+                            background: c.bg, color: c.text, border:`1px solid ${c.border}`,
+                            borderRadius:6, padding:'3px 8px', fontSize:11, fontWeight:500, whiteSpace:'nowrap'
+                          }}>
+                            {p.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Stat Cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2,1fr)' : 'repeat(4,1fr)', gap: isMobile ? 8 : 12, marginBottom: 16 }}>
