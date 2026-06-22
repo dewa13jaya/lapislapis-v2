@@ -4,30 +4,28 @@ import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [staff, setStaff] = useState([]);
-  const [selectedId, setSelectedId] = useState('');
+  const [nameInput, setNameInput] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    supabase.from('users_profile').select('id,name,role').eq('is_active', true).order('name')
-      .then(({ data }) => setStaff(data || []));
-  }, []);
 
   const handlePinInput = (digit) => {
     if (pin.length < 4) setPin(p => p + digit);
   };
 
   const handleLogin = async () => {
-    if (!selectedId) return setError('Pilih nama kamu dulu');
+    if (!nameInput.trim()) return setError('Masukkan nama kamu');
     if (pin.length < 4) return setError('Masukkan PIN 4 digit');
     setLoading(true);
     setError('');
-    const { data } = await supabase.from('users_profile').select('*').eq('id', selectedId).eq('pin', pin).eq('is_active', true).single();
+    const { data: rows } = await supabase
+      .from('users_profile')
+      .select('*')
+      .ilike('name', `${nameInput.trim()}%`)
+      .eq('is_active', true);
     setLoading(false);
-    if (!data) { setPin(''); return setError('PIN salah, coba lagi'); }
-    // Log activity
+    const data = (rows || []).find(r => r.pin === pin);
+    if (!data) { setPin(''); return setError('Nama atau PIN salah, coba lagi'); }
     await supabase.from('activity_log').insert({ id: Date.now().toString(36), user_id: data.id, user_name: data.name, action: 'login', description: `${data.name} login ke sistem` });
     login(data);
   };
@@ -44,14 +42,18 @@ export default function LoginPage() {
           <div style={{ fontSize:10, color:'#94a3b8', letterSpacing:'0.2em', fontWeight:600 }}>PRODUCTION & SALES SYSTEM</div>
         </div>
 
-        {/* Select Staff */}
+        {/* Name Input */}
         <div style={{ marginBottom:20 }}>
-          <label style={{ fontSize:12, fontWeight:700, color:'#374151', display:'block', marginBottom:6 }}>Siapa kamu?</label>
-          <select value={selectedId} onChange={e => { setSelectedId(e.target.value); setPin(''); setError(''); }}
-            style={{ width:'100%', padding:'11px 14px', border:'2px solid #e2e8f0', borderRadius:10, fontSize:14, outline:'none', background:'#fff', fontFamily:'inherit', color: selectedId ? '#1C1208' : '#94a3b8' }}>
-            <option value=''>-- Pilih nama --</option>
-            {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <label style={{ fontSize:12, fontWeight:700, color:'#374151', display:'block', marginBottom:6 }}>Nama kamu</label>
+          <input
+            type="text"
+            value={nameInput}
+            onChange={e => { setNameInput(e.target.value); setError(''); }}
+            onKeyDown={e => e.key === 'Enter' && pin.length === 4 && handleLogin()}
+            placeholder="Ketik nama lengkap..."
+            autoComplete="off"
+            style={{ width:'100%', padding:'11px 14px', border:'2px solid #e2e8f0', borderRadius:10, fontSize:14, outline:'none', fontFamily:'inherit', color:'#1C1208', boxSizing:'border-box' }}
+          />
         </div>
 
         {/* PIN Display */}
@@ -79,8 +81,8 @@ export default function LoginPage() {
 
         {error && <div style={{ background:'#fee2e2', color:'#991b1b', padding:'10px 14px', borderRadius:8, fontSize:13, marginBottom:16, textAlign:'center', fontWeight:600 }}>{error}</div>}
 
-        <button onClick={handleLogin} disabled={loading || pin.length < 4 || !selectedId}
-          style={{ width:'100%', padding:'13px', background: pin.length === 4 && selectedId ? '#1C1208' : '#94a3b8', color:'#fff', border:'none', borderRadius:10, fontSize:15, fontWeight:700, cursor: pin.length === 4 && selectedId ? 'pointer' : 'not-allowed', transition:'all .2s' }}>
+        <button onClick={handleLogin} disabled={loading || pin.length < 4 || !nameInput.trim()}
+          style={{ width:'100%', padding:'13px', background: pin.length === 4 && nameInput.trim() ? '#1C1208' : '#94a3b8', color:'#fff', border:'none', borderRadius:10, fontSize:15, fontWeight:700, cursor: pin.length === 4 && nameInput.trim() ? 'pointer' : 'not-allowed', transition:'all .2s' }}>
           {loading ? 'Memverifikasi...' : 'Masuk →'}
         </button>
 

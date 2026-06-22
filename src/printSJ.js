@@ -2,8 +2,20 @@ import { fmtDate } from './utils';
 
 // ── Surat Jalan Sementara (sebelum pengiriman / status confirmed/packed) ──────
 // Hanya berisi: Qty Pesan + Qty Kirim. Tanpa info reject.
-export function printSJSementara(order, products, outlets) {
-  const outlet = outlets.find(o => o.id === order.outlet_id) || {};
+function fmtDateTime(isoStr) {
+  if (!isoStr) return '-';
+  const d = new Date(isoStr);
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mn = String(d.getMinutes()).padStart(2,'0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${mn}`;
+}
+
+export function printSJSementara(order, products, outlets, staff = []) {
+  const outlet   = outlets.find(o => o.id === order.outlet_id) || {};
+  const orderer  = staff.find(s => s.id === order.created_by) || {};
   const rows = (order.order_items || []).map((item, idx) => {
     const p = products.find(x => x.id === item.product_id) || {};
     const qtyKirim = item.qty_delivered ?? item.qty;
@@ -52,8 +64,12 @@ export function printSJSementara(order, products, outlets) {
     <td style="padding:3px 0"><b>Kendaraan</b> : ${order.vehicle_no || '________________'}</td>
   </tr>
   <tr>
-    <td style="padding:3px 0"><b>PIC Outlet</b> : ${outlet.pic_name || '________________'}</td>
-    <td style="padding:3px 0"><b>No. HP PIC</b> : ${outlet.pic_phone || '________________'}</td>
+    <td style="padding:3px 0"><b>No. Telp Outlet</b> : ${outlet.phone || '-'}</td>
+    <td style="padding:3px 0"><b>Pemesan</b> : ${orderer.name || order.created_by_name || '________________'}</td>
+  </tr>
+  <tr>
+    <td style="padding:3px 0"><b>Tgl Pesan</b> : ${fmtDateTime(order.created_at)}</td>
+    <td style="padding:3px 0"><b>No. HP Pemesan</b> : ${orderer.phone || '________________'}</td>
   </tr>
 </table>
 <table>
@@ -80,8 +96,9 @@ export function printSJSementara(order, products, outlets) {
 
 // ── Surat Jalan Final (setelah pengiriman / status delivered/partial_delivered) ─
 // Berisi: Qty Pesan + Qty Terkirim + Qty Reject + Alasan.
-export function printSJFinal(order, products, outlets) {
-  const outlet = outlets.find(o => o.id === order.outlet_id) || {};
+export function printSJFinal(order, products, outlets, staff = []) {
+  const outlet   = outlets.find(o => o.id === order.outlet_id) || {};
+  const orderer  = staff.find(s => s.id === order.created_by) || {};
   const rows = (order.order_items || []).map((item, idx) => {
     const p = products.find(x => x.id === item.product_id) || {};
     const qtyDel = item.qty_delivered ?? item.qty;
@@ -133,8 +150,12 @@ export function printSJFinal(order, products, outlets) {
     <td style="padding:3px 0"><b>Kendaraan</b> : ${order.vehicle_no || '-'}</td>
   </tr>
   <tr>
-    <td style="padding:3px 0"><b>PIC Outlet</b> : ${outlet.pic_name || '________________'}</td>
-    <td style="padding:3px 0"><b>No. HP PIC</b> : ${outlet.pic_phone || '________________'}</td>
+    <td style="padding:3px 0"><b>No. Telp Outlet</b> : ${outlet.phone || '-'}</td>
+    <td style="padding:3px 0"><b>Pemesan</b> : ${orderer.name || order.created_by_name || '________________'}</td>
+  </tr>
+  <tr>
+    <td style="padding:3px 0"><b>Tgl Pesan</b> : ${fmtDateTime(order.created_at)}</td>
+    <td style="padding:3px 0"><b>No. HP Pemesan</b> : ${orderer.phone || '________________'}</td>
   </tr>
 </table>
 <table>
@@ -162,11 +183,11 @@ export function printSJFinal(order, products, outlets) {
 }
 
 // ── Helper: pilih versi SJ berdasarkan status order ───────────────────────────
-export function printSJ(order, products, outlets) {
+export function printSJ(order, products, outlets, staff = []) {
   if (['delivered', 'partial_delivered', 'rejected'].includes(order.status)) {
-    printSJFinal(order, products, outlets);
+    printSJFinal(order, products, outlets, staff);
   } else {
-    printSJSementara(order, products, outlets);
+    printSJSementara(order, products, outlets, staff);
   }
 }
 

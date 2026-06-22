@@ -3,7 +3,7 @@ import { fmtDate } from '../utils';
 import { StatusBadge } from '../components/UI';
 import { printSJ, sjLabel } from '../printSJ';
 
-export default function SuratJalan({ orders, products, outlets, showToast }) {
+export default function SuratJalan({ orders, products, outlets, staff, showToast }) {
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -81,9 +81,14 @@ export default function SuratJalan({ orders, products, outlets, showToast }) {
                     {totalRejected > 0 && <span style={{ color:'#ef4444', marginLeft:4 }}>· Reject: {totalRejected} unit</span>}
                   </div>
                 </div>
-                <button onClick={() => printSJ(order, products, outlets)} style={{ padding:'10px 18px', background: ['delivered','partial_delivered','rejected'].includes(order.status) ? '#10b981' : '#1C1208', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
-                  {sjLabel(order)}
-                </button>
+                {['packed','delivered','partial_delivered'].includes(order.status)
+                  ? <button onClick={() => printSJ(order, products, outlets, staff||[])} style={{ padding:'10px 18px', background: ['delivered','partial_delivered'].includes(order.status) ? '#10b981' : '#1C1208', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
+                      {sjLabel(order)}
+                    </button>
+                  : <div style={{ padding:'10px 18px', background:'#e2e8f0', color:'#94a3b8', borderRadius:8, fontSize:12, fontWeight:600 }}>
+                      🔒 Menunggu status Packed
+                    </div>
+                }
               </div>
             </div>
           );

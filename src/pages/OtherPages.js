@@ -8,8 +8,9 @@ import { RoleBadge, Btn, FieldGroup } from '../components/UI';
 const SALES_ROLES = ['sales', 'kepala_sales'];
 
 export function StaffManager({ staff, outlets, onRefresh, showToast }) {
-  const [form, setForm] = useState({ name:'', role:'produksi', pin:'', outlet_ids:[] });
+  const [form, setForm] = useState({ name:'', role:'produksi', pin:'', phone:'', outlet_ids:[] });
   const [editPin, setEditPin] = useState({});
+  const [editPhone, setEditPhone] = useState({});
   const [editOutlets, setEditOutlets] = useState({});
   const [outletOpen, setOutletOpen] = useState({}); // { staffId: bool }
   const [saving, setSaving] = useState(false);
@@ -23,11 +24,11 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     if (form.pin.length !== 4 || !/^\d+$/.test(form.pin)) return showToast('❌ PIN harus 4 angka');
     setSaving(true);
     const outletIds = SALES_ROLES.includes(form.role) ? form.outlet_ids : [];
-    const { error } = await supabase.from('users_profile').insert({ id: 'USR' + uid().slice(0,6), name: form.name, role: form.role, pin: form.pin, is_active: true, outlet_ids: outletIds });
+    const { error } = await supabase.from('users_profile').insert({ id: 'USR' + uid().slice(0,6), name: form.name, role: form.role, pin: form.pin, phone: form.phone||null, is_active: true, outlet_ids: outletIds });
     setSaving(false);
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Staff ' + form.name + ' berhasil ditambahkan');
-    setForm({ name:'', role:'produksi', pin:'', outlet_ids:[] });
+    setForm({ name:'', role:'produksi', pin:'', phone:'', outlet_ids:[] });
     onRefresh();
   };
 
@@ -51,6 +52,14 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
     await supabase.from('users_profile').update({ pin: newPin }).eq('id', s.id);
     setEditPin(p => { const n = {...p}; delete n[s.id]; return n; });
     showToast('✅ PIN ' + s.name + ' berhasil direset');
+    onRefresh();
+  };
+
+  const savePhone = async (s) => {
+    const phone = editPhone[s.id] ?? '';
+    await supabase.from('users_profile').update({ phone: phone || null }).eq('id', s.id);
+    setEditPhone(p => { const n = {...p}; delete n[s.id]; return n; });
+    showToast('✅ No. HP ' + s.name + ' disimpan');
     onRefresh();
   };
 
@@ -127,6 +136,11 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
           <div style={{ marginTop:12 }}>
             <FieldGroup label="PIN (4 angka)">
               <input type="text" maxLength={4} value={form.pin} onChange={e => setForm(f => ({...f, pin: e.target.value.replace(/\D/,'')}))} style={S.input} placeholder="Contoh: 1234" />
+            </FieldGroup>
+          </div>
+          <div style={{ marginTop:12 }}>
+            <FieldGroup label="No. HP (opsional)">
+              <input type="text" value={form.phone} onChange={e => setForm(f => ({...f, phone: e.target.value}))} style={S.input} placeholder="08xx..." />
             </FieldGroup>
           </div>
           <Btn onClick={addStaff} disabled={saving} color="#1C1208" style={{ marginTop:16, width:'100%' }}>
@@ -208,10 +222,13 @@ export function StaffManager({ staff, outlets, onRefresh, showToast }) {
                           </div>
                         </div>
 
-                        {/* Row 2: reset PIN */}
-                        <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:10 }}>
+                        {/* Row 2: reset PIN + edit phone */}
+                        <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:10, flexWrap:'wrap' }}>
                           <input type="text" maxLength={4} value={editPin[s.id]||''} onChange={e => setEditPin(p => ({...p, [s.id]: e.target.value.replace(/\D/,'')}))} style={{ ...S.input, width:90, padding:'5px 8px', fontSize:12 }} placeholder="PIN baru" />
                           <Btn small onClick={() => resetPin(s)} color="#B49A35">Reset PIN</Btn>
+                          <div style={{ width:1, height:20, background:'#e2e8f0', margin:'0 2px' }} />
+                          <input type="text" value={editPhone[s.id] ?? (s.phone||'')} onChange={e => setEditPhone(p => ({...p, [s.id]: e.target.value}))} style={{ ...S.input, width:130, padding:'5px 8px', fontSize:12 }} placeholder="No. HP" />
+                          <Btn small onClick={() => savePhone(s)} color="#10b981">💾 No. HP</Btn>
                         </div>
 
                         {/* Row 3: Outlet collapsible — sales roles only */}
@@ -498,8 +515,11 @@ export function ProductManager({ products, onRefresh, showToast }) {
 export function OutletManager({ outlets, onRefresh, showToast }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [form, setForm] = useState({ name:'', address:'', pic_name:'', pic_phone:'', notes:'', jam_operasional:'' });
-  const [saving, setSaving] = useState(false);
+  const emptyForm = { name:'', address:'', phone:'', pic_name:'', pic_phone:'', notes:'', jam_operasional:'' };
+  const [form, setForm]         = useState(emptyForm);
+  const [editId, setEditId]     = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [saving, setSaving]     = useState(false);
 
   const addOutlet = async () => {
     if (!form.name) return showToast('❌ Nama outlet wajib diisi');
@@ -508,7 +528,22 @@ export function OutletManager({ outlets, onRefresh, showToast }) {
     setSaving(false);
     if (error) return showToast('❌ ' + error.message);
     showToast('✅ Outlet berhasil ditambahkan');
-    setForm({ name:'', address:'', pic_name:'', pic_phone:'', notes:'', jam_operasional:'' });
+    setForm(emptyForm);
+    onRefresh();
+  };
+
+  const startEdit = (o) => {
+    setEditId(o.id);
+    setEditForm({ phone: o.phone||'', pic_name: o.pic_name||'', pic_phone: o.pic_phone||'', address: o.address||'', jam_operasional: o.jam_operasional||'', notes: o.notes||'' });
+  };
+
+  const saveEdit = async (id) => {
+    setSaving(true);
+    const { error } = await supabase.from('outlets').update(editForm).eq('id', id);
+    setSaving(false);
+    if (error) return showToast('❌ ' + error.message);
+    showToast('✅ Outlet diupdate');
+    setEditId(null);
     onRefresh();
   };
 
@@ -535,8 +570,9 @@ export function OutletManager({ outlets, onRefresh, showToast }) {
           {isAdmin && <>{[
             { label:'Nama Outlet *', key:'name', ph:'Outlet MOI' },
             { label:'Alamat', key:'address', ph:'Alamat lengkap...' },
-            { label:'Nama PIC', key:'pic_name', ph:'Nama penanggung jawab outlet' },
-            { label:'No HP PIC', key:'pic_phone', ph:'08xx...' },
+            { label:'No. Telp Outlet', key:'phone', ph:'021-xxxx / 08xx...' },
+            { label:'Nama PIC Pemesan', key:'pic_name', ph:'Nama penanggung jawab outlet' },
+            { label:'No HP PIC Pemesan', key:'pic_phone', ph:'08xx...' },
             { label:'Jam Operasional', key:'jam_operasional', ph:'10:00 - 21:00' },
             { label:'Catatan Khusus', key:'notes', ph:'Misal: parkir di basement...' },
           ].map(f => (
@@ -557,15 +593,50 @@ export function OutletManager({ outlets, onRefresh, showToast }) {
           : outlets.map(o => (
             <div key={o.id} style={{ padding:'14px 16px', background:'#f8f7f4', borderRadius:10, marginBottom:10 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-                <div>
+                <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontWeight:700, fontSize:14 }}>{o.name}</div>
                   {o.address && <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>📍 {o.address}</div>}
+                  {o.phone && <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>📞 {o.phone}</div>}
                   {o.pic_name && <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>👤 {o.pic_name} {o.pic_phone && `· ${o.pic_phone}`}</div>}
                   {o.jam_operasional && <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>🕐 {o.jam_operasional}</div>}
                   {o.notes && <div style={{ fontSize:12, color:'#B49A35', marginTop:2 }}>📝 {o.notes}</div>}
                 </div>
-                {isAdmin && <button onClick={() => deleteOutlet(o.id, o.name)} style={{ background:'none', border:'none', color:'#ef4444', cursor:'pointer', fontSize:18, padding:'4px 8px' }} title="Hapus outlet">🗑</button>}
+                <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+                  <button onClick={() => editId === o.id ? setEditId(null) : startEdit(o)} style={{ background:'none', border:'1px solid #e2e8f0', color:'#64748b', cursor:'pointer', fontSize:12, padding:'4px 10px', borderRadius:6, fontWeight:600 }}>
+                    {editId === o.id ? 'Tutup' : '✏️ Edit'}
+                  </button>
+                  {isAdmin && <button onClick={() => deleteOutlet(o.id, o.name)} style={{ background:'none', border:'none', color:'#ef4444', cursor:'pointer', fontSize:18, padding:'4px 8px' }} title="Hapus outlet">🗑</button>}
+                </div>
               </div>
+
+              {/* Inline edit form */}
+              {editId === o.id && (
+                <div style={{ marginTop:12, padding:12, background:'#fff', borderRadius:8, border:'1px solid #e2e8f0' }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:'#64748b', marginBottom:10 }}>EDIT DETAIL OUTLET</div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                    {[
+                      { label:'Nama PIC Pemesan', key:'pic_name', ph:'Nama penanggung jawab' },
+                      { label:'No HP PIC Pemesan', key:'pic_phone', ph:'08xx...' },
+                      { label:'No. Telp Outlet', key:'phone', ph:'021-xxxx / 08xx...' },
+                      { label:'Alamat', key:'address', ph:'Alamat lengkap...' },
+                      { label:'Jam Operasional', key:'jam_operasional', ph:'10:00 - 21:00' },
+                    ].map(f => (
+                      <div key={f.key}>
+                        <div style={{ fontSize:11, fontWeight:600, color:'#374151', marginBottom:4 }}>{f.label}</div>
+                        <input value={editForm[f.key]||''} onChange={e => setEditForm(p => ({...p, [f.key]: e.target.value}))} style={S.input} placeholder={f.ph} />
+                      </div>
+                    ))}
+                    <div style={{ gridColumn:'1/-1' }}>
+                      <div style={{ fontSize:11, fontWeight:600, color:'#374151', marginBottom:4 }}>Catatan Khusus</div>
+                      <input value={editForm.notes||''} onChange={e => setEditForm(p => ({...p, notes: e.target.value}))} style={S.input} placeholder="Misal: parkir di basement..." />
+                    </div>
+                  </div>
+                  <div style={{ marginTop:10, display:'flex', gap:8 }}>
+                    <Btn onClick={() => saveEdit(o.id)} disabled={saving} color="#1C1208">{saving ? 'Menyimpan...' : '✅ Simpan'}</Btn>
+                    <button onClick={() => setEditId(null)} style={{ padding:'8px 14px', background:'none', border:'1px solid #e2e8f0', borderRadius:8, cursor:'pointer', fontSize:12 }}>Batal</button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

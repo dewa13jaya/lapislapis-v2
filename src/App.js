@@ -31,7 +31,8 @@ function MainApp() {
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(''), 3500); };
 
   const fetchAll = useCallback(async () => {
-    setLoading(true);
+    // Don't setLoading(true) here — only the initial useState(true) blocks UI.
+    // Subsequent refreshes (realtime, manual) update data silently in background.
     const [p, o, si, so, r, ord, st, al] = await Promise.all([
       supabase.from('products').select('*').order('name'),
       supabase.from('outlets').select('*').order('name'),

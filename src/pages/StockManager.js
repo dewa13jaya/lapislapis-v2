@@ -1,20 +1,24 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabase';
 import { useAuth } from '../context/AuthContext';
-import { uid, today, fmtDate, S, DEFECT_REASONS, RETUR_REASONS } from '../utils';
+import { uid, today, fmtDate, S, DEFECT_REASONS, RETUR_REASONS, useIsMobile } from '../utils';
 import { Btn, FieldGroup } from '../components/UI';
 
 const logActivity = async (user, action, description) => {
   await supabase.from('activity_log').insert({ id: uid(), user_id: user.id, user_name: user.name, action, description });
 };
 
-export default function StockManager({ products, outlets, stockIn, stockOut, returns, currentStock, onRefresh, showToast }) {
+export default function StockManager({ products, outlets, stockIn, stockOut, returns, orders, currentStock, onRefresh, showToast }) {
   const { user } = useAuth();
+  const isMobile = useIsMobile();
+  const [mainTab, setMainTab] = useState('input');
   const [activeTab, setActiveTab] = useState('in');
   const [saving, setSaving] = useState(false);
   const [summaryKat, setSummaryKat] = useState('all');
   const [summarySearch, setSummarySearch] = useState('');
   const [onlyHasStock, setOnlyHasStock] = useState(true);
+  const [summaryFrom, setSummaryFrom] = useState(today());
+  const [summaryTo,   setSummaryTo]   = useState(today());
 
   // ── Cart system (shared, resets when tab changes) ──────────────────────────
   const [cart, setCart] = useState([]);
@@ -49,6 +53,212 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
   const [konvNotes,     setKonvNotes]     = useState('');
 
   const canEdit = ['admin','produksi','kepala_produksi'].includes(user?.role);
+
+  // ── Mass input (grid mode) ─────────────────────────────────────────────────
+  const [massMode, setMassMode]   = useState(false);
+  const [massQty,  setMassQty]    = useState({});  // { product_id: qty_string }
+  const [massBatch,    setMassBatch]    = useState('');
+  const [massDate,     setMassDate]     = useState(today());
+  const [massExpired,  setMassExpired]  = useState('');
+
+  // ── WA Import paste ────────────────────────────────────────────────────────
+  const [waText,    setWaText]    = useState('');
+  const [waPaste,   setWaPaste]   = useState(false);
+  const [waResult,  setWaResult]  = useState(null); // { matched:[{pid,name,qty}], unmatched:[str] }
+
+  const parseWaImport = () => {
+    // Size columns in WA format order: (Slc/Qtr/Half/Rnd/Sqr)
+    const WA_SIZES = ['Slice','Quarter','Half','Round','Square'];
+    const newQty = { ...massQty };
+    const matched = [];
+    const unmatched = [];
+
+    // Helper: normalize string for matching
+    const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g,'');
+
+    // WA variant aliases → full variant fragment for product matching
+    const ALIASES = {
+      'ori':'original', 'spk':'spekulas', 'che':'cheese', 'alm':'almond',
+      'choc':'choco', 'pandan':'pandan', 'prune':'prune',
+      'greentea':'greentea', 'coffee':'coffee', 'mocca':'mocca',
+      'cempedak':'cempedak', 'durian':'durian', 'fruit':'fruit',
+      'sur':'surabaya', 'surrainbow':'surabaya rainbow', 'surainbow':'surabaya rainbow',
+      'surchoc':'surabaya choco', 'surmix':'surabaya mix',
+      'surmixchoc':'surabaya mix choco', 'surpanmix':'surabaya pandan mix',
+      'surpandovo':'surabaya pandan ovo', 'surmocca':'surabaya mocca',
+      'surpancheese':'surabaya pandan cheese',
+    };
+
+    const lines = waText.split('\n').map(l => l.trim()).filter(Boolean);
+    lines.forEach(line => {
+      // Skip headers like *STOK AKHIR ...*, *STOK COOKIES*, etc.
+      if (/^\*[^*]+\*$/.test(line)) return;
+      if (/^\*(bikin|angetan|tempel|belum|retur)/i.test(line)) return;
+      if (/^by\s*:/i.test(line)) return;
+
+      // Format: * variant : (a/b/c/d/e)
+      const m1 = line.match(/^\*?\s*(.+?)\s*:\s*\(([^)]+)\)/i);
+      if (m1) {
+        const rawVariant = m1[1].replace(/\*/g,'').trim();
+        const parts = m1[2].split('/').map(s => s.trim());
+        const vKey = norm(rawVariant);
+        const resolved = ALIASES[vKey] || rawVariant.toLowerCase();
+
+        let anyMatch = false;
+        parts.forEach((val, idx) => {
+          if (val === '-' || val === '' || Number(val) <= 0) return;
+          const sz = WA_SIZES[idx];
+          if (!sz) return;
+
+          // Try to find product with this variant + size
+          let p = null;
+          // First: exact keyword search
+          products.forEach(prod => {
+            const pn = prod.name.toLowerCase();
+            const resolvedParts = resolved.split(' ').filter(x=>x.length>1);
+            const szMatch = pn.includes(sz.toLowerCase()) || (sz==='Square' && (pn.includes('loyang') || !WA_SIZES.some(s=>s!=='Square'&&pn.includes(s.toLowerCase()))));
+            const varMatch = resolvedParts.every(part => pn.includes(part));
+            if (szMatch && varMatch && !p) p = prod;
+          });
+
+          if (p) {
+            newQty[p.id] = String(Number(val));
+            if (!matched.find(x => x.pid === p.id)) matched.push({ pid:p.id, name:p.name, qty: Number(val) });
+            else { const ex = matched.find(x=>x.pid===p.id); if(ex) ex.qty=Number(val); }
+            anyMatch = true;
+          } else {
+            unmatched.push(`${rawVariant} ${sz} (${val})`);
+          }
+        });
+        return;
+      }
+
+      // Format: Product name : qty (Cookies section)
+      const m2 = line.match(/^(.+?)\s*:\s*(\d+)\s*$/);
+      if (m2) {
+        const rawName = m2[1].replace(/\*/g,'').trim();
+        const qty = Number(m2[2]);
+        if (qty <= 0) return;
+        const rn = norm(rawName);
+        // Find best matching product
+        let best = null, bestScore = 0;
+        products.forEach(p => {
+          const pn = norm(p.name);
+          let score = 0;
+          if (pn === rn) score = 100;
+          else if (pn.includes(rn) && rn.length > 2) score = rn.length;
+          else if (rn.includes(pn) && pn.length > 2) score = pn.length;
+          if (score > bestScore) { bestScore = score; best = p; }
+        });
+        if (best && bestScore > 2) {
+          newQty[best.id] = String(qty);
+          matched.push({ pid:best.id, name:best.name, qty });
+        } else {
+          unmatched.push(`${rawName} (${qty})`);
+        }
+      }
+    });
+
+    setMassQty(newQty);
+    setWaResult({ matched, unmatched });
+  };
+
+  const handleMassSubmit = async () => {
+    const entries = Object.entries(massQty).filter(([,v]) => Number(v) > 0);
+    if (entries.length === 0) return showToast('❌ Belum ada qty yang diisi');
+    if (!massBatch) return showToast('❌ Kode batch wajib diisi');
+    setSaving(true);
+    let errors = 0;
+    for (const [pid, qty] of entries) {
+      const { error } = await supabase.from('stock_in').insert({
+        id: uid(), product_id: pid, qty: Number(qty), date: massDate,
+        batch_code: massBatch, expired_date: massExpired || null,
+        created_by: user.id, created_by_name: user.name,
+      });
+      if (!error) {
+        await supabase.from('batches').insert({
+          id: uid(), batch_code: massBatch, product_id: pid, qty_initial: Number(qty),
+          expired_date: massExpired || null, created_by: user.id, created_by_name: user.name,
+        });
+        const p = products.find(x => x.id === pid);
+        await supabase.from('activity_log').insert({ id: uid(), user_id: user.id, user_name: user.name, action:'stok_masuk', description:`Stok masuk ${qty} ${p?.unit} ${p?.name} — Batch: ${massBatch}` });
+      } else { errors++; }
+    }
+    setSaving(false);
+    if (errors > 0) showToast(`⚠️ ${errors} item gagal`);
+    else showToast(`✅ ${entries.length} produk berhasil disimpan!`);
+    setMassQty({});
+    onRefresh();
+  };
+
+  // ── Variant sort order matching WA recap format ────────────────────────────
+  // Order must match: ori, spk, che, alm, choc, Pandan, Prune, green tea, Coffee, Mocca,
+  //   Cempedak, Durian, Fruit | Sur, Sur rainbow, Sur choc, Sur.mix, sur mix choc,
+  //   Sur pan Mix, SurPand Ovo, Sur mocca, Sur Pan cheese
+  // Cookies: Kastangel, Nastar m, Nastar prem L, Nastar prem M, Nastar durian,
+  //   Queker, S.keju, L.kucing, Blue Che, Straw Che, Chocodark, Semprit, Hazelnute,
+  //   Che ALM, Chocosoft, Kue kacang, Cookies legit, Coconut cookies, Snow ball
+  const VARIANT_KEYWORDS = {
+    'Lapis Legit': [
+      'original','spekulaas','spekulas','cheese','almond',
+      'choco','chocolate','pandan','prune','green','coffee','mocca','cempedak','durian','fruit',
+    ],
+    'Lapis Surabaya': [
+      '_base_','rainbow',
+      'choco','chocolate',          // Sur choc (no 'mix')
+      'mix choco','mix choc',       // Sur mix choc — longer so wins over 'mix' alone
+      'mix',                        // Sur.mix (plain mix)
+      'pandan mix','pandan ovo','mocca','pandan cheese','pandan',
+    ],
+    'Cookies': [
+      'kastangel',
+      'nastar prem','nastar durian','nastar',  // prem/durian longer → win over plain 'nastar'
+      'queker',
+      'sagu keju','s.keju','s keju',
+      'lidah kucing','l.kucing',
+      'blue','straw',
+      'chocodark','semprit','hazel',
+      'che alm','cheese alm',
+      'chocosoft','kue kacang',
+      'cookies legit','cookie legit',
+      'coconut','snow',
+    ],
+    'Gift Box': [],
+  };
+
+  // Best-match-length scoring: longer keyword wins over shorter (handles "nastar prem" > "nastar")
+  const sortVariants = (variants, kat) => {
+    const keys = VARIANT_KEYWORDS[kat];
+    if (!keys || keys.length === 0) return [...variants].sort();
+    const score = v => {
+      const vn = v.toLowerCase();
+      const base = kat.toLowerCase();
+      if (keys.includes('_base_') && vn.replace(base,'').trim() === '') return keys.indexOf('_base_');
+      let bestIdx = 999, bestLen = 0;
+      keys.forEach((k, i) => {
+        if (k === '_base_') return;
+        if (vn.includes(k) && k.length > bestLen) { bestLen = k.length; bestIdx = i; }
+      });
+      return bestIdx;
+    };
+    return [...variants].sort((a, b) => score(a) - score(b));
+  };
+
+  // Sort products within a kategori group (for Ringkasan Stok rows)
+  const sortProductsByVariant = (prods, kat) => {
+    const variantOf = p => ['Lapis Legit','Lapis Surabaya'].includes(kat) ? getVariant(p.name) : p.name;
+    const allVariants = [...new Set(prods.map(variantOf))];
+    const sorted = sortVariants(allVariants, kat);
+    return [...prods].sort((a, b) => {
+      const ai = sorted.indexOf(variantOf(a));
+      const bi = sorted.indexOf(variantOf(b));
+      if (ai !== bi) return ai - bi;
+      // Same variant → sort by size
+      const szA = SIZE_ORDER.indexOf(getSizeName(a.name)||'');
+      const szB = SIZE_ORDER.indexOf(getSizeName(b.name)||'');
+      return szA - szB;
+    });
+  };
 
   const SIZE_ORDER = ['Slice','Quarter','Half','Round','Square','Loyang'];
   // Standard: "Nama Produk Ukuran" (tanpa dash). Dash juga tetap dibaca untuk backward compat.
@@ -266,12 +476,19 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
     : activeTab === 'konversi' ? stockOut.filter(x => x.out_type === 'konversi')
     : returns;
 
-  // Stock summary
+  // Stock summary — pergerakan difilter per periode, saldo tetap all-time
+  const inRange = d => {
+    const dt = (d||'').slice(0,10);
+    return (!summaryFrom || dt >= summaryFrom) && (!summaryTo || dt <= summaryTo);
+  };
   const stockSummary = products.map(p => {
-    const totalIn    = stockIn.filter(x => x.product_id === p.id).reduce((s,x) => s+Number(x.qty), 0);
-    const totalOut   = stockOut.filter(x => x.product_id === p.id).reduce((s,x) => s+Number(x.qty), 0);
-    const totalRetur = returns.filter(x => x.product_id === p.id).reduce((s,x) => s+Number(x.qty), 0);
-    return { ...p, totalIn, totalOut, totalRetur, saldo: currentStock[p.id] || 0 };
+    const totalIn    = stockIn.filter(x => x.product_id === p.id && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
+    const totalOut   = stockOut.filter(x => x.product_id === p.id && x.out_type !== 'konversi' && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
+    const totalRetur = returns.filter(x => x.product_id === p.id && !['expired_rusak','konversi'].includes(x.return_type) && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
+    const orderOut   = orders.filter(o => ['delivered','partial_delivered'].includes(o.status) && inRange(o.actual_delivery_date || o.delivery_date))
+      .flatMap(o => o.order_items||[]).filter(i => i.product_id === p.id)
+      .reduce((s,i) => s+Number(i.qty_delivered??i.qty), 0);
+    return { ...p, totalIn, totalOut, totalRetur, orderOut, saldo: currentStock[p.id] || 0 };
   });
 
   // Product selector helpers for item form
@@ -282,17 +499,104 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
 
   return (
     <div>
-      <h2 style={{ margin:'0 0 20px', fontWeight:800, color:'#1C1208' }}>Manajemen Stok</h2>
+      {/* ── Main tab bar ─────────────────────────────────────────────────── */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:8 }}>
+        <h2 style={{ margin:0, fontWeight:800, color:'#1C1208' }}>Manajemen Stok</h2>
+        <div style={{ display:'flex', gap:4 }}>
+          {[
+            { id:'input',    label: isMobile ? '📥 Input' : '📥 Input Stok' },
+            { id:'ringkasan',label: isMobile ? '📊 Ringkasan' : '📊 Ringkasan Stok' },
+            { id:'saldo',    label: isMobile ? '📋 Stok' : '📋 Stok by Rasa' },
+          ].map(t => (
+            <button key={t.id} onClick={() => setMainTab(t.id)} style={{
+              padding: isMobile ? '8px 14px' : '9px 20px',
+              fontSize: isMobile ? 12 : 13,
+              fontWeight:700,
+              background: mainTab===t.id ? '#1C1208' : '#e2e8f0',
+              color: mainTab===t.id ? '#fff' : '#64748b',
+              border:'none', borderRadius:8, cursor:'pointer'
+            }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
 
-      {/* ── Stock Summary ─────────────────────────────────────────────────── */}
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB: RINGKASAN STOK
+      ══════════════════════════════════════════════════════════════════ */}
+      {mainTab === 'ringkasan' && (
       <div style={{ background:'#fff', borderRadius:12, padding:20, boxShadow:'0 1px 4px rgba(0,0,0,.07)', marginBottom:20 }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:8 }}>
           <h3 style={{ margin:0, fontSize:14, fontWeight:700 }}>📊 Ringkasan Stok</h3>
-          <label style={{ fontSize:12, color:'#64748b', display:'flex', alignItems:'center', gap:6, cursor:'pointer' }}>
-            <input type="checkbox" checked={onlyHasStock} onChange={e => setOnlyHasStock(e.target.checked)} />
-            Tampilkan yang ada stok saja
-          </label>
+          <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            <label style={{ fontSize:12, color:'#64748b', display:'flex', alignItems:'center', gap:6, cursor:'pointer' }}>
+              <input type="checkbox" checked={onlyHasStock} onChange={e => setOnlyHasStock(e.target.checked)} />
+              Ada stok saja
+            </label>
+            <button onClick={() => {
+              const tgl = new Date().toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+              const periodeLabel = summaryFrom && summaryTo
+                ? (summaryFrom === summaryTo ? summaryFrom : `${summaryFrom} s/d ${summaryTo}`)
+                : summaryFrom ? `>= ${summaryFrom}` : summaryTo ? `<= ${summaryTo}` : 'Semua waktu';
+
+              // Build filtered data (same logic as table)
+              const filtered = stockSummary
+                .filter(p => summaryKat === 'all' || p.kategori === summaryKat)
+                .filter(p => !summarySearch || p.name.toLowerCase().includes(summarySearch.toLowerCase()))
+                .filter(p => !onlyHasStock || p.saldo > 0 || p.totalIn > 0);
+
+              const groups = {};
+              filtered.forEach(p => { const k = p.kategori||'Lainnya'; if (!groups[k]) groups[k]=[]; groups[k].push(p); });
+
+              const lines = [];
+              lines.push(`📦 *RINGKASAN STOK LAPISLAPIS*`);
+              lines.push(`📅 ${tgl}`);
+              lines.push(`📊 Periode: ${periodeLabel}`);
+              lines.push('');
+
+              const WA_KAT_ORDER = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
+              const sortedWaKats = [...WA_KAT_ORDER.filter(k => groups[k]), ...Object.keys(groups).filter(k => !WA_KAT_ORDER.includes(k)).sort()];
+              sortedWaKats.forEach(kat => {
+                const items = sortProductsByVariant(groups[kat], kat);
+                lines.push(`*── ${kat.toUpperCase()} ──*`);
+                items.forEach(p => {
+                  const status = p.saldo <= 0 ? '🔴' : p.saldo <= (p.stok_minimum||5) ? '🟡' : '🟢';
+                  lines.push(`${status} ${p.name}: *${p.saldo} ${p.unit}*`);
+                });
+                lines.push('');
+              });
+
+              const habis = filtered.filter(p => p.saldo <= 0);
+              const hampir = filtered.filter(p => p.saldo > 0 && p.saldo <= (p.stok_minimum||5));
+              if (habis.length > 0) lines.push(`🔴 Stok Habis: ${habis.length} produk`);
+              if (hampir.length > 0) lines.push(`🟡 Hampir Habis: ${hampir.length} produk`);
+              lines.push('');
+              lines.push(`_Dikirim dari LAPISLAPIS System_`);
+
+              window.open(`https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`, '_blank');
+            }} style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', background:'#25D366', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontWeight:700, fontSize:12 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+              Kirim WA
+            </button>
+          </div>
         </div>
+
+        {/* Filter periode */}
+        <div style={{ display:'flex', gap:6, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
+          <span style={{ fontSize:11, fontWeight:700, color:'#64748b' }}>PERIODE PERGERAKAN:</span>
+          {[
+            { label:'Hari Ini', from: today(), to: today() },
+            { label:'Minggu Ini', from: (() => { const d=new Date(); d.setDate(d.getDate()-d.getDay()+1); return d.toISOString().slice(0,10); })(), to: today() },
+            { label:'Bulan Ini', from: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10), to: today() },
+            { label:'Semua', from: '', to: '' },
+          ].map(opt => {
+            const isActive = summaryFrom === opt.from && summaryTo === opt.to;
+            return <button key={opt.label} onClick={() => { setSummaryFrom(opt.from); setSummaryTo(opt.to); }} style={{ padding:'4px 10px', fontSize:11, fontWeight:600, border:'none', borderRadius:20, cursor:'pointer', background: isActive ? '#1C1208' : '#e2e8f0', color: isActive ? '#fff' : '#64748b' }}>{opt.label}</button>;
+          })}
+          <input type="date" value={summaryFrom} onChange={e => setSummaryFrom(e.target.value)} style={{ padding:'4px 8px', border:'1px solid #e2e8f0', borderRadius:6, fontSize:12 }} />
+          <span style={{ fontSize:11, color:'#94a3b8' }}>s/d</span>
+          <input type="date" value={summaryTo} onChange={e => setSummaryTo(e.target.value)} style={{ padding:'4px 8px', border:'1px solid #e2e8f0', borderRadius:6, fontSize:12 }} />
+        </div>
+
         <div style={{ display:'flex', gap:6, marginBottom:12, flexWrap:'wrap' }}>
           {['all', ...KAT_LIST].map(k => {
             const count = k === 'all' ? stockSummary.length : stockSummary.filter(p => p.kategori === k).length;
@@ -316,11 +620,16 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                 if (filtered.length === 0) return <tr><td colSpan={7} style={{ textAlign:'center', padding:24, color:'#94a3b8' }}>Tidak ada data</td></tr>;
                 const groups = {}; filtered.forEach(p => { const k = p.kategori||'Lainnya'; if (!groups[k]) groups[k]=[]; groups[k].push(p); });
                 const KAT_COLOR = { 'Lapis Legit':'#FBF5DF','Lapis Surabaya':'#dbeafe','Cookies':'#fce7f3','Gift Box':'#d1fae5' };
+                const KAT_SORT_ORDER = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
                 const rows = [];
-                Object.entries(groups).forEach(([kat, items]) => {
+                const sortedGroupKats = [
+                  ...KAT_SORT_ORDER.filter(k => groups[k]),
+                  ...Object.keys(groups).filter(k => !KAT_SORT_ORDER.includes(k)).sort(),
+                ];
+                sortedGroupKats.forEach(kat => {
+                  const items = sortProductsByVariant(groups[kat], kat);
                   if (summaryKat === 'all') rows.push(<tr key={'hdr-'+kat}><td colSpan={7} style={{ padding:'6px 10px', background: KAT_COLOR[kat]||'#f1f5f9', fontSize:12, fontWeight:700, color:'#374151' }}>🏷 {kat} — {items.length} produk</td></tr>);
                   items.forEach(p => {
-                    const orderOut = p.totalIn + p.totalRetur - p.saldo - p.totalOut;
                     const isLow = p.saldo > 0 && p.saldo <= (p.stok_minimum||5);
                     const isEmpty = p.saldo <= 0;
                     rows.push(
@@ -329,7 +638,7 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                         <td style={{ padding:'8px 10px', textAlign:'right', color:'#10b981', fontWeight:600 }}>+{p.totalIn}</td>
                         <td style={{ padding:'8px 10px', textAlign:'right', color:'#B49A35', fontWeight:600 }}>+{p.totalRetur}</td>
                         <td style={{ padding:'8px 10px', textAlign:'right', color:'#ef4444', fontWeight:600 }}>-{p.totalOut}</td>
-                        <td style={{ padding:'8px 10px', textAlign:'right', color:'#8b5cf6', fontWeight:600 }}>-{Math.max(0,orderOut)}</td>
+                        <td style={{ padding:'8px 10px', textAlign:'right', color:'#8b5cf6', fontWeight:600 }}>-{Math.max(0,p.orderOut)}</td>
                         <td style={{ padding:'8px 10px', textAlign:'right', fontWeight:800, fontSize:14, color: isEmpty && p.totalIn>0 ? '#ef4444' : isLow ? '#B49A35' : '#1C1208' }}>{p.saldo}</td>
                         <td style={{ padding:'8px 10px', textAlign:'right', fontSize:11, color:'#94a3b8' }}>{p.stok_minimum||5}</td>
                       </tr>
@@ -342,18 +651,356 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
           </table>
         </div>
       </div>
+      )}
 
-      <div style={{ display:'grid', gridTemplateColumns:'380px 1fr', gap:20 }}>
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB: SALDO PER RASA (PIVOT)
+      ══════════════════════════════════════════════════════════════════ */}
+      {mainTab === 'saldo' && (() => {
+        // Smallest → largest. Loyang treated as Square.
+        const SIZE_COLS = ['Slice','Quarter','Half','Round','Square'];
+        // Short labels for column headers
+        const SIZE_LABEL = { Slice:'Slc', Quarter:'Qtr', Half:'Half', Round:'Rnd', Square:'Sqr' };
+
+        // Build pivot: kategori → variant → { [size]: product }
+        const pivot = {};
+        products.forEach(p => {
+          const kat = p.kategori || 'Lainnya';
+          const variant = getVariant(p.name);
+          let sz = getSizeName(p.name);
+          // Loyang and no-suffix → treat as Square
+          if (!sz || sz.toLowerCase() === 'loyang') sz = 'Square';
+          if (!pivot[kat]) pivot[kat] = {};
+          if (!pivot[kat][variant]) pivot[kat][variant] = {};
+          pivot[kat][variant][sz] = p;
+        });
+
+        // Only show columns that have at least one product
+        const activeCols = SIZE_COLS.filter(sz =>
+          Object.values(pivot).some(variants =>
+            Object.values(variants).some(sizes => sizes[sz])
+          )
+        );
+
+        // Category display order
+        const KAT_ORDER = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
+        const KAT_COLOR = {
+          'Lapis Legit':    '#FBF5DF',
+          'Lapis Surabaya': '#dbeafe',
+          'Cookies':        '#fce7f3',
+          'Gift Box':       '#d1fae5',
+        };
+
+        // Sort kategori by KAT_ORDER, then alphabetical for unknowns
+        const HIDE_KATS = ['Gift Box'];
+        const sortedKats = [
+          ...KAT_ORDER.filter(k => pivot[k] && !HIDE_KATS.includes(k)),
+          ...Object.keys(pivot).filter(k => !KAT_ORDER.includes(k) && !HIDE_KATS.includes(k)).sort(),
+        ];
+
+        const sendSaldoWA = () => {
+          const now = new Date();
+          const tgl = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}.${String(now.getMinutes()).padStart(2,'0')}`;
+
+          // Shorten variant name for WA
+          const shortName = (variant, kat) => {
+            if (kat === 'Lapis Legit') return variant.replace(/^Lapis Legit\s*/i, '') || 'Original';
+            if (kat === 'Lapis Surabaya') {
+              const flavor = variant.replace(/^Lapis Surabaya\s*/i, '');
+              return flavor.toLowerCase() === 'original' || !flavor ? 'Sur' : `Sur ${flavor}`;
+            }
+            return variant;
+          };
+
+          const val = (p) => {
+            if (!p) return '-';
+            const s = currentStock[p.id] || 0;
+            return s <= 0 ? '-' : String(s);
+          };
+
+          const lines = [];
+          lines.push(`*STOK SEMENTARA ${tgl}*`);
+
+          // Lapis Legit + Lapis Surabaya with (Slc/Qtr/Half/Rnd/Sqr) format
+          ['Lapis Legit', 'Lapis Surabaya'].forEach(kat => {
+            if (!pivot[kat]) return;
+            lines.push('');
+            sortVariants(Object.keys(pivot[kat]), kat).forEach(variant => {
+              const sizes = pivot[kat][variant];
+              const vals = activeCols.map(sz => val(sizes[sz])).join('/');
+              lines.push(`• ${shortName(variant, kat)} : (${vals})`);
+            });
+          });
+
+          // Cookies — no size columns, just name : qty
+          if (pivot['Cookies']) {
+            lines.push('');
+            lines.push('*STOCK COOKIES*');
+            sortVariants(Object.keys(pivot['Cookies']), 'Cookies').forEach(variant => { const sizes = pivot['Cookies'][variant];
+              // Cookies usually only Square/no-size
+              const p = sizes['Square'] || Object.values(sizes)[0];
+              const s = p ? (currentStock[p.id] || 0) : 0;
+              lines.push(`${variant} : ${s <= 0 ? '-' : s}`);
+            });
+          }
+
+          // Gift Box — excluded from WA report
+
+          window.open(`https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`, '_blank');
+        };
+
+        return (
+          <div style={{ background:'#fff', borderRadius:12, padding:16, boxShadow:'0 1px 4px rgba(0,0,0,.07)', marginBottom:20 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+                <h3 style={{ margin:0, fontSize:13, fontWeight:700 }}>📋 Stok by Rasa</h3>
+                <div style={{ display:'flex', gap:8, fontSize:10, color:'#64748b' }}>
+                  <span style={{ color:'#10b981', fontWeight:700 }}>● Cukup</span>
+                  <span style={{ color:'#B49A35', fontWeight:700 }}>● Hampir</span>
+                  <span style={{ color:'#ef4444', fontWeight:700 }}>● Habis</span>
+                </div>
+              </div>
+              <button onClick={sendSaldoWA} style={{ display:'flex', alignItems:'center', gap:5, padding:'6px 12px', background:'#25D366', color:'#fff', border:'none', borderRadius:7, cursor:'pointer', fontWeight:700, fontSize:11 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                Kirim WA
+              </button>
+            </div>
+
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'auto', minWidth:'100%', borderCollapse:'collapse', tableLayout:'fixed' }}>
+                <colgroup>
+                  <col style={{ width:200 }} />
+                  {activeCols.map(sz => <col key={sz} style={{ width:58 }} />)}
+                </colgroup>
+                {/* Sticky header */}
+                <thead>
+                  <tr style={{ background:'#f8f7f4' }}>
+                    <th style={{ padding:'5px 10px', textAlign:'left', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>Varian</th>
+                    {activeCols.map(sz => (
+                      <th key={sz} style={{ padding:'5px 6px', textAlign:'center', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>{SIZE_LABEL[sz]||sz}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedKats.map(kat => {
+                    const variants = pivot[kat];
+                    const katBg = KAT_COLOR[kat] || '#f1f5f9';
+                    return (
+                      <React.Fragment key={kat}>
+                        {/* Category row */}
+                        <tr>
+                          <td colSpan={activeCols.length + 1} style={{ background:katBg, padding:'5px 10px', fontWeight:700, fontSize:11, color:'#374151', borderTop:'2px solid #e2e8f0', borderBottom:'1px solid #e2e8f0' }}>
+                            {kat}
+                          </td>
+                        </tr>
+                        {/* Variant rows */}
+                        {sortVariants(Object.keys(variants), kat).map(variant => {
+                          const sizes = variants[variant];
+                          return (
+                          <tr key={variant} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                            <td style={{ padding:'4px 10px', fontWeight:600, fontSize:11, color:'#1C1208', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{variant}</td>
+                            {activeCols.map(sz => {
+                              const p = sizes[sz];
+                              if (!p) return <td key={sz} style={{ padding:'3px 4px', textAlign:'center', color:'#d1d5db', fontSize:11 }}>—</td>;
+                              const saldo = currentStock[p.id] || 0;
+                              const isEmpty = saldo <= 0;
+                              const isLow   = saldo > 0 && saldo <= (p.stok_minimum || 5);
+                              const color   = isEmpty ? '#ef4444' : isLow ? '#B49A35' : '#10b981';
+                              const bg      = isEmpty ? '#fff5f5' : isLow ? '#fffbeb' : '#f0fdf4';
+                              return (
+                                <td key={sz} style={{ padding:'3px 4px', textAlign:'center' }}>
+                                  <div style={{ background:bg, borderRadius:4, padding:'3px 0', fontWeight:800, fontSize:12, color }}>
+                                    {saldo}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB: INPUT STOK
+      ══════════════════════════════════════════════════════════════════ */}
+      {mainTab === 'input' && (
+      <>
+
+        {/* ── Sub-tab buttons (always visible) ─────────────────────────── */}
+        {canEdit && (
+          <div style={{ display:'flex', gap:4, marginBottom:16, flexWrap:'wrap', alignItems:'center' }}>
+            {['in','out','retur','konversi'].map(t => (
+              <button key={t} onClick={() => { switchTab(t); if(t!=='in') setMassMode(false); }} style={{ padding:'9px 12px', fontSize:11, fontWeight:700, background: activeTab===t ? tabColor[t] : '#f1f5f9', color: activeTab===t ? '#fff' : '#64748b', border:'none', borderRadius:8, cursor:'pointer' }}>{tabLabel[t]}</button>
+            ))}
+            {activeTab === 'in' && (
+              <button onClick={() => { setMassMode(m => !m); setMassQty({}); }} style={{ marginLeft:'auto', padding:'9px 14px', fontSize:11, fontWeight:700, background: massMode ? '#1C1208' : '#e2e8f0', color: massMode ? '#fff' : '#64748b', border:'none', borderRadius:8, cursor:'pointer' }}>
+                {massMode ? '✕ Mode Normal' : '⊞ Mass Input'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── MASS INPUT GRID ─────────────────────────────────────────── */}
+        {canEdit && activeTab === 'in' && massMode && (() => {
+          const MASS_SIZES  = ['Slice','Quarter','Half','Round','Square'];
+          const MASS_LABELS = { Slice:'Slc', Quarter:'Qtr', Half:'Half', Round:'Rnd', Square:'Sqr' };
+          const KAT_ORDER   = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
+          const KAT_COLOR   = { 'Lapis Legit':'#FBF5DF','Lapis Surabaya':'#dbeafe','Cookies':'#fce7f3','Gift Box':'#d1fae5' };
+
+          // Build same pivot as Stok by Rasa
+          const mp = {};
+          products.forEach(p => {
+            const kat = p.kategori || 'Lainnya';
+            const variant = getVariant(p.name);
+            let sz = getSizeName(p.name);
+            if (!sz || sz.toLowerCase() === 'loyang') sz = 'Square';
+            if (!mp[kat]) mp[kat] = {};
+            if (!mp[kat][variant]) mp[kat][variant] = {};
+            mp[kat][variant][sz] = p;
+          });
+
+          const activeMassCols = MASS_SIZES.filter(sz =>
+            Object.values(mp).some(vs => Object.values(vs).some(ss => ss[sz]))
+          );
+          const HIDE_KATS_MASS = ['Gift Box'];
+          const sortedMassKats = [...KAT_ORDER.filter(k => mp[k] && !HIDE_KATS_MASS.includes(k)), ...Object.keys(mp).filter(k => !KAT_ORDER.includes(k) && !HIDE_KATS_MASS.includes(k)).sort()];
+          const totalFilled = Object.values(massQty).filter(v => Number(v) > 0).length;
+
+          return (
+            <div style={{ background:'#fff', borderRadius:12, padding:20, boxShadow:'0 1px 4px rgba(0,0,0,.07)', marginBottom:20 }}>
+              {/* Header fields */}
+              <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap:12, marginBottom:16 }}>
+                <FieldGroup label="Tanggal *">
+                  <input type="date" value={massDate} onChange={e => setMassDate(e.target.value)} style={S.input} />
+                </FieldGroup>
+                <FieldGroup label="Kode Batch *">
+                  <input value={massBatch} onChange={e => setMassBatch(e.target.value)} style={S.input} placeholder="Contoh: LP-001" />
+                </FieldGroup>
+                <FieldGroup label="Expired (opsional)">
+                  <input type="date" value={massExpired} onChange={e => setMassExpired(e.target.value)} style={S.input} />
+                </FieldGroup>
+              </div>
+
+              {/* ── WA Paste ── */}
+              <div style={{ marginBottom:16 }}>
+                <button onClick={() => { setWaPaste(w=>!w); setWaResult(null); }} style={{ padding:'7px 14px', fontSize:11, fontWeight:700, background: waPaste ? '#1C1208' : '#f1f5f9', color: waPaste ? '#fff' : '#64748b', border:'none', borderRadius:8, cursor:'pointer' }}>
+                  📋 {waPaste ? 'Tutup WA Import' : 'WA Import (Paste)'}
+                </button>
+                {waPaste && (
+                  <div style={{ marginTop:10 }}>
+                    <textarea
+                      value={waText} onChange={e => setWaText(e.target.value)}
+                      placeholder="Paste recap WhatsApp di sini..."
+                      style={{ width:'100%', height:160, padding:10, fontSize:12, border:'2px solid #e2e8f0', borderRadius:8, fontFamily:'monospace', resize:'vertical', boxSizing:'border-box' }}
+                    />
+                    <div style={{ display:'flex', gap:8, marginTop:6 }}>
+                      <button onClick={parseWaImport} disabled={!waText.trim()} style={{ padding:'8px 16px', background:'#B49A35', color:'#fff', border:'none', borderRadius:8, fontWeight:700, fontSize:12, cursor:'pointer' }}>
+                        ⚡ Parse & Isi Grid
+                      </button>
+                      <button onClick={() => { setWaText(''); setWaResult(null); }} style={{ padding:'8px 12px', background:'none', border:'1px solid #e2e8f0', borderRadius:8, fontSize:12, cursor:'pointer', color:'#64748b' }}>Reset</button>
+                    </div>
+                    {waResult && (
+                      <div style={{ marginTop:10, padding:12, background:'#f0fdf4', borderRadius:8, border:'1px solid #86efac', fontSize:12 }}>
+                        <div style={{ fontWeight:700, color:'#166534', marginBottom:6 }}>✅ Berhasil match {waResult.matched.length} produk</div>
+                        {waResult.unmatched.length > 0 && (
+                          <div style={{ marginTop:6 }}>
+                            <div style={{ fontWeight:700, color:'#92400e', marginBottom:4 }}>⚠️ Tidak ditemukan ({waResult.unmatched.length}):</div>
+                            <div style={{ color:'#92400e' }}>{waResult.unmatched.join(' · ')}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Pivot grid */}
+              <div style={{ overflowX:'auto' }}>
+                <table style={{ borderCollapse:'collapse', tableLayout:'fixed', width:'auto', minWidth:'100%' }}>
+                  <colgroup>
+                    <col style={{ width:180 }} />
+                    {activeMassCols.map(sz => <col key={sz} style={{ width:70 }} />)}
+                  </colgroup>
+                  <thead>
+                    <tr style={{ background:'#f8f7f4' }}>
+                      <th style={{ padding:'6px 10px', textAlign:'left', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>Varian</th>
+                      {activeMassCols.map(sz => (
+                        <th key={sz} style={{ padding:'6px 8px', textAlign:'center', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>{MASS_LABELS[sz]}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedMassKats.map(kat => (
+                      <React.Fragment key={kat}>
+                        <tr>
+                          <td colSpan={activeMassCols.length + 1} style={{ background: KAT_COLOR[kat]||'#f1f5f9', padding:'5px 10px', fontWeight:700, fontSize:11, color:'#374151', borderTop:'2px solid #e2e8f0' }}>
+                            {kat}
+                          </td>
+                        </tr>
+                        {sortVariants(Object.keys(mp[kat]), kat).map(variant => {
+                          const sizes = mp[kat][variant];
+                          return (
+                          <tr key={variant} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                            <td style={{ padding:'4px 10px', fontSize:11, fontWeight:600, color:'#1C1208', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                              {variant}
+                            </td>
+                            {activeMassCols.map(sz => {
+                              const p = sizes[sz];
+                              if (!p) return <td key={sz} style={{ padding:'3px 4px', textAlign:'center', color:'#d1d5db', fontSize:11 }}>—</td>;
+                              const saldo = currentStock[p.id] || 0;
+                              const hasVal = Number(massQty[p.id]||0) > 0;
+                              return (
+                                <td key={sz} style={{ padding:'3px 4px', textAlign:'center' }}>
+                                  <div style={{ position:'relative' }}>
+                                    <input
+                                      type="number" min="0"
+                                      value={massQty[p.id] || ''}
+                                      onChange={e => setMassQty(q => ({ ...q, [p.id]: e.target.value }))}
+                                      placeholder="0"
+                                      style={{ width:'100%', padding:'5px 4px', textAlign:'center', border: `2px solid ${hasVal ? '#10b981' : '#e2e8f0'}`, borderRadius:6, fontSize:13, fontWeight:700, outline:'none', boxSizing:'border-box', background: hasVal ? '#f0fdf4' : '#fff' }}
+                                    />
+                                    <div style={{ fontSize:9, color:'#94a3b8', marginTop:1 }}>saldo:{saldo}</div>
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                          );
+                        })}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Submit */}
+              <div style={{ marginTop:16, display:'flex', alignItems:'center', gap:12 }}>
+                <button onClick={handleMassSubmit} disabled={saving || totalFilled === 0 || !massBatch}
+                  style={{ padding:'10px 24px', background: totalFilled > 0 && massBatch ? '#10b981' : '#94a3b8', color:'#fff', border:'none', borderRadius:8, fontWeight:700, fontSize:13, cursor: totalFilled > 0 && massBatch ? 'pointer' : 'not-allowed' }}>
+                  {saving ? 'Menyimpan...' : `✅ Submit ${totalFilled} Produk`}
+                </button>
+                {totalFilled > 0 && <span style={{ fontSize:12, color:'#64748b' }}>{totalFilled} produk akan diinput</span>}
+                {totalFilled > 0 && <button onClick={() => setMassQty({})} style={{ padding:'8px 14px', background:'none', border:'1px solid #e2e8f0', borderRadius:8, fontSize:12, cursor:'pointer', color:'#64748b' }}>Reset</button>}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── NORMAL 2-COLUMN LAYOUT ──────────────────────────────────── */}
+        {(!massMode || activeTab !== 'in') && (
+        <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '380px 1fr', gap:20 }}>
 
         {/* ── INPUT FORM ────────────────────────────────────────────────────── */}
         {canEdit && (
           <div>
-            {/* Tab buttons */}
-            <div style={{ display:'flex', gap:4, marginBottom:16, flexWrap:'wrap' }}>
-              {['in','out','retur','konversi'].map(t => (
-                <button key={t} onClick={() => switchTab(t)} style={{ flex:1, padding:'9px 4px', fontSize:10, fontWeight:700, background: activeTab===t ? tabColor[t] : '#f1f5f9', color: activeTab===t ? '#fff' : '#64748b', border:'none', borderRadius:8, cursor:'pointer', minWidth:60 }}>{tabLabel[t]}</button>
-              ))}
-            </div>
 
             <div style={{ background:'#fff', borderRadius:12, padding:20, boxShadow:'0 1px 4px rgba(0,0,0,.07)' }}>
 
@@ -714,6 +1361,11 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
           </div>
         </div>
       </div>
+      )}
+
+      </>
+      )}
+
     </div>
   );
 }
