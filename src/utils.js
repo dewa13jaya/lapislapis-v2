@@ -33,7 +33,7 @@ export const canAccess = (user, feature) => {
 // ─── SHARED STYLES ────────────────────────────────────────────────────────────
 export const S = {
   // fontSize:16 pada input penting — mencegah iOS auto-zoom saat focus
-  input: { width:'100%', padding:'11px 14px', border:'1.5px solid #e2e8f0', borderRadius:10, fontSize:16, outline:'none', boxSizing:'border-box', background:'#fff', fontFamily:'inherit' },
+  input: { width:'100%', padding:'11px 14px', border:'1.5px solid #e2e8f0', borderRadius:10, fontSize:16, outline:'none', boxSizing:'border-box', background:'#fff', color:'#111', fontFamily:'inherit', colorScheme:'light' },
   btn:   { padding:'12px 22px', color:'#fff', border:'none', borderRadius:10, cursor:'pointer', fontSize:15, fontWeight:600 },
   btnSm: { padding:'9px 14px', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:600 },
   th:    { padding:'11px 12px', textAlign:'left', fontSize:12, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' },

@@ -263,46 +263,93 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
           {/* Add items */}
           <div style={{ background:'#f8f7f4', borderRadius:8, padding:12, marginBottom:12 }}>
             <div style={{ fontSize:13, fontWeight:700, marginBottom:10 }}>Tambah Produk</div>
-            <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : '1fr 1fr 1fr auto auto', gap:8, alignItems:'flex-end' }}>
-              <div>
-                <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Kategori</div>
-                <select value={newItem.kat} onChange={e => setNewItem(i => ({...i, kat: e.target.value, variant:'', product_id:''}))} style={S.input}>
-                  <option value=''>-- Semua --</option>
-                  {KAT_LIST.map(k => <option key={k} value={k}>{k}</option>)}
-                </select>
+            {isMobile ? (
+              // Mobile: tiap field full width, stacked vertikal
+              <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                <FieldGroup label="Kategori">
+                  <select value={newItem.kat} onChange={e => setNewItem(i => ({...i, kat: e.target.value, variant:'', product_id:''}))} style={S.input}>
+                    <option value=''>-- Semua Kategori --</option>
+                    {KAT_LIST.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                </FieldGroup>
+                <FieldGroup label="Varian / Produk">
+                  <select value={newItem.variant} onChange={e => {
+                    const v = e.target.value;
+                    const sizes = sizesFor(v);
+                    setNewItem(i => ({...i, variant: v, product_id: sizes.length === 1 ? sizes[0].id : ''}));
+                  }} style={S.input}>
+                    <option value=''>-- Pilih Varian --</option>
+                    {variantsFor(newItem.kat).map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </FieldGroup>
+                {newItem.variant && (
+                  <FieldGroup label="Ukuran">
+                    {sizesFor(newItem.variant).length > 1
+                      ? <select value={newItem.product_id} onChange={e => setNewItem(i => ({...i, product_id: e.target.value}))} style={S.input}>
+                          <option value=''>-- Pilih Ukuran --</option>
+                          {sizesFor(newItem.variant).map(p => {
+                            const size = p.name.includes(' - ') ? p.name.split(' - ').pop() : p.name;
+                            return <option key={p.id} value={p.id}>{size} — Stok: {currentStock[p.id]||0}</option>;
+                          })}
+                        </select>
+                      : <div style={{ ...S.input, background:'#f1f5f9', color:'#64748b' }}>
+                          Stok: {currentStock[newItem.product_id]||0}
+                        </div>
+                    }
+                  </FieldGroup>
+                )}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:10, alignItems:'flex-end' }}>
+                  <FieldGroup label="Qty">
+                    <input type="number" min="1" value={newItem.qty} onChange={e => setNewItem(i => ({...i, qty: e.target.value}))} style={S.input} placeholder="0" />
+                  </FieldGroup>
+                  <div style={{ paddingBottom:0 }}>
+                    <Btn onClick={addItem} color="#3b82f6" style={{ width:'100%', marginTop:22 }}>+ Tambah</Btn>
+                  </div>
+                </div>
               </div>
-              <div>
-                <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Varian</div>
-                <select value={newItem.variant} onChange={e => {
-                  const v = e.target.value;
-                  const sizes = sizesFor(v);
-                  setNewItem(i => ({...i, variant: v, product_id: sizes.length === 1 ? sizes[0].id : ''}));
-                }} style={S.input}>
-                  <option value=''>-- Pilih Varian --</option>
-                  {variantsFor(newItem.kat).map(v => <option key={v} value={v}>{v}</option>)}
-                </select>
+            ) : (
+              // Desktop: grid 5 kolom
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr auto auto', gap:8, alignItems:'flex-end' }}>
+                <div>
+                  <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Kategori</div>
+                  <select value={newItem.kat} onChange={e => setNewItem(i => ({...i, kat: e.target.value, variant:'', product_id:''}))} style={S.input}>
+                    <option value=''>-- Semua --</option>
+                    {KAT_LIST.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Varian</div>
+                  <select value={newItem.variant} onChange={e => {
+                    const v = e.target.value;
+                    const sizes = sizesFor(v);
+                    setNewItem(i => ({...i, variant: v, product_id: sizes.length === 1 ? sizes[0].id : ''}));
+                  }} style={S.input}>
+                    <option value=''>-- Pilih Varian --</option>
+                    {variantsFor(newItem.kat).map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Ukuran</div>
+                  {newItem.variant && sizesFor(newItem.variant).length > 1
+                    ? <select value={newItem.product_id} onChange={e => setNewItem(i => ({...i, product_id: e.target.value}))} style={S.input}>
+                        <option value=''>-- Pilih --</option>
+                        {sizesFor(newItem.variant).map(p => {
+                          const size = p.name.includes(' - ') ? p.name.split(' - ').pop() : p.name;
+                          return <option key={p.id} value={p.id}>{size} (Stok: {currentStock[p.id]||0})</option>;
+                        })}
+                      </select>
+                    : <div style={{ ...S.input, background:'#f1f5f9', color:'#94a3b8', fontSize:14 }}>
+                        {newItem.product_id ? `Stok: ${currentStock[newItem.product_id]||0}` : '-'}
+                      </div>
+                  }
+                </div>
+                <div>
+                  <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Qty</div>
+                  <input type="number" min="1" value={newItem.qty} onChange={e => setNewItem(i => ({...i, qty: e.target.value}))} style={{ ...S.input, width:80 }} placeholder="0" />
+                </div>
+                <Btn onClick={addItem} color="#3b82f6">+ Tambah</Btn>
               </div>
-              <div>
-                <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Ukuran</div>
-                {newItem.variant && sizesFor(newItem.variant).length > 1
-                  ? <select value={newItem.product_id} onChange={e => setNewItem(i => ({...i, product_id: e.target.value}))} style={S.input}>
-                      <option value=''>-- Pilih --</option>
-                      {sizesFor(newItem.variant).map(p => {
-                        const size = p.name.includes(' - ') ? p.name.split(' - ').pop() : p.name;
-                        return <option key={p.id} value={p.id}>{size} (Stok: {currentStock[p.id]||0})</option>;
-                      })}
-                    </select>
-                  : <div style={{ ...S.input, background:'#f1f5f9', color:'#94a3b8', fontSize:14 }}>
-                      {newItem.product_id ? `Stok: ${currentStock[newItem.product_id]||0}` : '-'}
-                    </div>
-                }
-              </div>
-              <div>
-                <div style={{ fontSize:12, color:'#64748b', marginBottom:4 }}>Qty</div>
-                <input type="number" min="1" value={newItem.qty} onChange={e => setNewItem(i => ({...i, qty: e.target.value}))} style={{ ...S.input, width: isMobile ? '100%' : 80 }} placeholder="0" />
-              </div>
-              <Btn onClick={addItem} color="#3b82f6" style={isMobile ? { width:'100%', marginTop:4 } : {}}>+ Tambah</Btn>
-            </div>
+            )}
           </div>
 
           {form.items.length > 0 && (
