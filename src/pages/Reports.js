@@ -77,6 +77,8 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
   const [stokSubTab,  setStokSubTab]  = useState('saldo');
   const [opname,      setOpname]      = useState({});
   const [expandedOutlet, setExpandedOutlet] = useState(null);
+  const [returSubTab, setReturSubTab] = useState('overview');
+  const [expandedReturOutlet, setExpandedReturOutlet] = useState(null);
   const [filterUkuran, setFilterUkuran] = useState('');
 
   const SIZE_OPTIONS = ['Slice','Quarter','Half','Round','Square','Loyang'];
@@ -233,6 +235,43 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
   })();
 
   const totalReturQty = returInRange.reduce((s, r) => s + Number(r.qty || 0), 0);
+
+  // ── Retur per Outlet (detail harian) — reject_pengiriman + rusak_pengiriman ─
+  const returPerOutletDetail = (() => {
+    const fromOutlet = returInRange.filter(r =>
+      ['reject_pengiriman','rusak_pengiriman'].includes(r.return_type)
+    );
+    const map = {};
+    fromOutlet.forEach(r => {
+      const outlet = outlets.find(o => o.id === r.outlet_id);
+      const key = r.outlet_id || 'unknown';
+      if (!map[key]) map[key] = { outlet, name: outlet?.name || 'Tidak diketahui', items: [], totalQty: 0 };
+      const p = products.find(x => x.id === r.product_id);
+      map[key].items.push({
+        date: r.date,
+        product: p?.name || '-',
+        unit: p?.unit || '-',
+        qty: Number(r.qty || 0),
+        kondisi: r.return_type === 'rusak_pengiriman' ? '💔 Rusak' : '✅ Bagus',
+        kondisiColor: r.return_type === 'rusak_pengiriman' ? '#ef4444' : '#10b981',
+        alasan: r.reason || '-',
+      });
+      map[key].totalQty += Number(r.qty || 0);
+    });
+    Object.values(map).forEach(v => v.items.sort((a, b) => b.date.localeCompare(a.date)));
+    return Object.values(map).sort((a, b) => b.totalQty - a.totalQty);
+  })();
+
+  // ── Barang Rusak Produksi (expired_rusak) — admin & kepala_produksi only ───
+  const rusakProduksiDetail = returInRange
+    .filter(r => r.return_type === 'expired_rusak')
+    .map(r => {
+      const p = products.find(x => x.id === r.product_id);
+      return { ...r, productName: p?.name || '-', unit: p?.unit || '-' };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const canSeeRusakProduksi = ['admin','kepala_produksi'].includes(role);
 
   // ── TAB PRODUKSI VS PENGIRIMAN ────────────────────────────────────────────
   const produksiReport = (() => {
@@ -712,6 +751,24 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
       {/* ════════════════════════════════════════════════════════════════════ */}
       {tab === 'retur' && (
         <>
+          {/* Sub-tab navigation */}
+          <div style={{ display:'flex', gap:6, marginBottom:16, flexWrap:'wrap' }}>
+            {[
+              { id:'overview',       label:'📊 Overview' },
+              { id:'per_outlet',     label:'🏪 Retur per Outlet' },
+              ...(canSeeRusakProduksi ? [{ id:'rusak_produksi', label:'🗑️ Rusak Produksi' }] : []),
+            ].map(st => (
+              <button key={st.id} onClick={() => setReturSubTab(st.id)}
+                style={{ padding:'8px 16px', borderRadius:20, border:'none', cursor:'pointer', fontSize:13, fontWeight:600,
+                  background: returSubTab === st.id ? '#1C1208' : '#e2e8f0',
+                  color: returSubTab === st.id ? '#fff' : '#64748b' }}>
+                {st.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── OVERVIEW ─────────────────────────────────────────────────── */}
+          {returSubTab === 'overview' && <>
           {/* Stat cards */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:12, marginBottom:16 }}>
             <StatCard label="Total Retur (Qty)"   val={totalReturQty}          color="#B49A35" />
@@ -812,6 +869,110 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
               }
             </Card>
           </div>
+          </>}
+
+          {/* ── PER OUTLET ────────────────────────────────────────────────── */}
+          {returSubTab === 'per_outlet' && (
+            <>
+              <div style={{ fontSize:13, color:'#64748b', marginBottom:12 }}>
+                Retur barang dari outlet — reject saat pengiriman (bagus maupun rusak). Periode sesuai filter tanggal di atas.
+              </div>
+              {returPerOutletDetail.length === 0
+                ? <Card><div style={{ textAlign:'center', padding:32, color:'#94a3b8' }}>Tidak ada data retur dari outlet di periode ini</div></Card>
+                : returPerOutletDetail.map(ot => {
+                    const isOpen = expandedReturOutlet === ot.name;
+                    const totalRusak = ot.items.filter(i => i.kondisi.includes('Rusak')).reduce((s, i) => s + i.qty, 0);
+                    const totalBagus = ot.items.filter(i => i.kondisi.includes('Bagus')).reduce((s, i) => s + i.qty, 0);
+                    return (
+                      <Card key={ot.name} style={{ marginBottom:8, padding:0, overflow:'hidden' }}>
+                        {/* Outlet header — clickable */}
+                        <div
+                          onClick={() => setExpandedReturOutlet(isOpen ? null : ot.name)}
+                          style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px', cursor:'pointer', background: isOpen ? '#f8f7f4' : '#fff' }}
+                        >
+                          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                            <span style={{ fontSize:16 }}>🏪</span>
+                            <span style={{ fontWeight:700, fontSize:14, color:'#1C1208' }}>{ot.name}</span>
+                            <span style={{ fontSize:11, color:'#94a3b8' }}>{ot.items.length} transaksi</span>
+                          </div>
+                          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                            {totalBagus > 0 && <span style={{ background:'#d1fae5', color:'#065f46', padding:'3px 10px', borderRadius:99, fontSize:11, fontWeight:700 }}>✅ Bagus: {totalBagus}</span>}
+                            {totalRusak > 0 && <span style={{ background:'#fee2e2', color:'#991b1b', padding:'3px 10px', borderRadius:99, fontSize:11, fontWeight:700 }}>💔 Rusak: {totalRusak}</span>}
+                            <span style={{ color:'#94a3b8', fontSize:16 }}>{isOpen ? '▲' : '▼'}</span>
+                          </div>
+                        </div>
+                        {/* Detail table */}
+                        {isOpen && (
+                          <div style={{ overflowX:'auto', borderTop:'1px solid #f1f5f9' }}>
+                            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                              <thead><tr style={{ background:'#f8f7f4' }}>
+                                <TH>Tanggal</TH>
+                                <TH>Produk</TH>
+                                <TH right>Qty</TH>
+                                <TH>Kondisi</TH>
+                                <TH>Alasan</TH>
+                              </tr></thead>
+                              <tbody>
+                                {ot.items.map((item, idx) => (
+                                  <tr key={idx} style={{ borderBottom:'1px solid #f1f5f9', background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
+                                    <td style={{ padding:'8px 12px', color:'#64748b', whiteSpace:'nowrap' }}>{fmtDate(item.date)}</td>
+                                    <td style={{ padding:'8px 12px', fontWeight:600 }}>{item.product}</td>
+                                    <td style={{ padding:'8px 12px', textAlign:'right', fontWeight:700, color:'#ef4444' }}>{item.qty} <span style={{ fontWeight:400, color:'#94a3b8', fontSize:11 }}>{item.unit}</span></td>
+                                    <td style={{ padding:'8px 12px', color:item.kondisiColor, fontWeight:700 }}>{item.kondisi}</td>
+                                    <td style={{ padding:'8px 12px', color:'#64748b', fontSize:11 }}>{item.alasan}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })
+              }
+            </>
+          )}
+
+          {/* ── RUSAK PRODUKSI (admin/kepala_produksi only) ──────────────── */}
+          {returSubTab === 'rusak_produksi' && canSeeRusakProduksi && (
+            <>
+              <div style={{ fontSize:13, color:'#64748b', marginBottom:12 }}>
+                Barang yang dicatat rusak / expired di gudang/produksi. Tidak menambah stok kembali.
+              </div>
+              {rusakProduksiDetail.length === 0
+                ? <Card><div style={{ textAlign:'center', padding:32, color:'#94a3b8' }}>Tidak ada data di periode ini</div></Card>
+                : <>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:12, marginBottom:16 }}>
+                    <StatCard label="Total Rusak" val={rusakProduksiDetail.reduce((s,r) => s+r.qty, 0)} color="#ef4444" />
+                    <StatCard label="Jumlah Produk" val={new Set(rusakProduksiDetail.map(r => r.product_id)).size} color="#B49A35" />
+                    <StatCard label="Frekuensi" val={rusakProduksiDetail.length + 'x'} color="#64748b" />
+                  </div>
+                  <Card>
+                    <div style={{ overflowX:'auto' }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                        <thead><tr style={{ background:'#f8f7f4' }}>
+                          <TH>Tanggal</TH>
+                          <TH>Produk</TH>
+                          <TH right>Qty</TH>
+                          <TH>Keterangan</TH>
+                        </tr></thead>
+                        <tbody>
+                          {rusakProduksiDetail.map((r, idx) => (
+                            <tr key={idx} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                              <td style={{ padding:'10px 12px', color:'#64748b', whiteSpace:'nowrap' }}>{fmtDate(r.date)}</td>
+                              <td style={{ padding:'10px 12px', fontWeight:600 }}>{r.productName}</td>
+                              <td style={{ padding:'10px 12px', textAlign:'right', fontWeight:700, color:'#ef4444' }}>{r.qty} <span style={{ fontWeight:400, color:'#94a3b8', fontSize:11 }}>{r.unit}</span></td>
+                              <td style={{ padding:'10px 12px', color:'#64748b', fontSize:12 }}>{r.reason || r.notes || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </>
+              }
+            </>
+          )}
         </>
       )}
 

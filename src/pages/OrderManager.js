@@ -28,6 +28,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
   const [dateFrom, setDateFrom]           = useState('');
   const [dateTo, setDateTo]               = useState('');
   const [sortBy, setSortBy]               = useState('newest');
+  const [filterPemesan, setFilterPemesan] = useState('');
 
   // ── Mass Order mode ───────────────────────────────────────────────────────
   const [massOrderMode, setMassOrderMode] = useState(false);
@@ -50,6 +51,10 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
 
   const canCreate = ['admin','sales','kepala_sales'].includes(user?.role);
   const canStatus = ['admin','produksi','kepala_produksi'].includes(user?.role);
+  const canFilterPemesan = ['admin','kepala_produksi','kepala_sales'].includes(user?.role);
+  const pemesanList = useMemo(() =>
+    [...new Set(orders.map(o => o.created_by_name).filter(Boolean))].sort()
+  , [orders]);
   const assignedOutletIds  = user?.outlet_ids || [];
   const availableOutlets   = (user?.role === 'sales' && assignedOutletIds.length > 0)
     ? outlets.filter(o => assignedOutletIds.includes(o.id))
@@ -253,6 +258,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       const outlet = outlets.find(x => x.id === o.outlet_id);
       return o.order_no?.toLowerCase().includes(s) || outlet?.name?.toLowerCase().includes(s);
     })
+    .filter(o => !filterPemesan || o.created_by_name === filterPemesan)
     .filter(o => {
       if (dateFrom && o.delivery_date < dateFrom) return false;
       if (dateTo && o.delivery_date > dateTo) return false;
@@ -262,7 +268,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       if (sortBy === 'newest') return b.delivery_date.localeCompare(a.delivery_date) || b.order_no.localeCompare(a.order_no);
       if (sortBy === 'oldest') return a.delivery_date.localeCompare(b.delivery_date) || a.order_no.localeCompare(b.order_no);
       return 0;
-    }), [orders, filter, search, dateFrom, dateTo, sortBy, outlets, isSalesRole, assignedOutletIds]);
+    }), [orders, filter, search, dateFrom, dateTo, sortBy, outlets, isSalesRole, assignedOutletIds, filterPemesan]);
 
   // ── ProductionDetail full-page view ──────────────────────────────────────
   if (productionOrder) {
@@ -624,8 +630,14 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
           <option value="newest">⬇ Terbaru</option>
           <option value="oldest">⬆ Terlama</option>
         </select>
-        {(search || dateFrom || dateTo) && (
-          <button onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); }} style={{ padding:'10px 14px', borderRadius:10, border:'none', background:'#fee2e2', color:'#ef4444', fontSize:13, cursor:'pointer', fontWeight:600 }}>✕ Reset</button>
+        {canFilterPemesan && pemesanList.length > 0 && (
+          <select value={filterPemesan} onChange={e => setFilterPemesan(e.target.value)} style={{ padding:'10px 12px', borderRadius:10, border:'1px solid #e2e8f0', fontSize:14, background: filterPemesan ? '#eff6ff' : '#fff', color: filterPemesan ? '#1d4ed8' : 'inherit', fontWeight: filterPemesan ? 700 : 400 }}>
+            <option value=''>👤 Semua Pemesan</option>
+            {pemesanList.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        )}
+        {(search || dateFrom || dateTo || filterPemesan) && (
+          <button onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setFilterPemesan(''); }} style={{ padding:'10px 14px', borderRadius:10, border:'none', background:'#fee2e2', color:'#ef4444', fontSize:13, cursor:'pointer', fontWeight:600 }}>✕ Reset</button>
         )}
       </div>
       {isMobile && (
