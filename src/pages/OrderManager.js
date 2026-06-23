@@ -201,7 +201,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
         const isRusak = rd.kondisi === 'rusak';
         // rusak_pengiriman = stok TIDAK balik; reject_pengiriman = stok balik ke gudang
         const returnType = isRusak ? 'rusak_pengiriman' : 'reject_pengiriman';
-        await supabase.from('order_items').update({ qty_rejected: rejQty, qty_delivered: item.qty - rejQty, reject_reason: rd.reason||'', reject_kondisi: isRusak ? 'rusak' : 'bagus' }).eq('id', item.id);
+        await supabase.from('order_items').update({ qty_rejected: rejQty, qty_delivered: item.qty - rejQty, reject_reason: rd.reason||'' }).eq('id', item.id);
         await supabase.from('returns').insert({ id: uid(), product_id: item.product_id, qty: rejQty, date: today(), outlet_id: order.outlet_id, order_id: order.id, reason: rd.reason||'Reject pengiriman', return_type: returnType, created_by: user.id, created_by_name: user.name });
         const p = products.find(x => x.id === item.product_id);
         await logActivity(user, 'reject', `Reject ${rejQty} ${p?.unit||''} ${p?.name||''} dari order ${order.order_no} — ${rd.reason||''} [${isRusak ? 'RUSAK, stok tidak balik' : 'Bagus, stok balik'}]`);
