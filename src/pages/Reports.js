@@ -185,8 +185,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
       const retur  = returns.filter(x => x.product_id === p.id && inRange(x.date) && !['expired_rusak','konversi'].includes(x.return_type)).reduce((s,x) => s+Number(x.qty), 0);
       return { product: p, masuk, keluar, retur, saldo: currentStock[p.id] || 0 };
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  , [products, stockIn, stockOut, returns, currentStock, dateFrom, dateTo, filterKat, filterUkuran]); // inRange inline deps
+  , [products, stockIn, stockOut, returns, currentStock, dateFrom, dateTo, filterKat, filterUkuran]);
 
   // ── TAB RETUR: Analisis Retur ─────────────────────────────────────────────
   const returInRange = returns.filter(r => inRange(r.date));
