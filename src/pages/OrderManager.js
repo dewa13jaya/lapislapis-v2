@@ -472,106 +472,64 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
               </FieldGroup>
             </div>
 
-            {/* Grid — mobile: list vertikal, desktop: pivot table */}
-            {isMobile ? (
-              // Mobile: tiap produk satu baris, tidak ada scroll horizontal
-              <div style={{ border:'1px solid #e2e8f0', borderRadius:8, overflow:'hidden' }}>
-                {sortedKats.map(kat => (
-                  <React.Fragment key={kat}>
-                    <div style={{ background: KAT_COLOR[kat]||'#f1f5f9', padding:'7px 12px', fontWeight:700, fontSize:12, color:'#374151', borderTop:'2px solid #e2e8f0' }}>
-                      {kat}
-                    </div>
-                    {Object.keys(mp[kat]).sort().flatMap(variant =>
-                      MASS_SIZES
-                        .filter(sz => mp[kat][variant][sz])
-                        .map(sz => {
-                          const p = mp[kat][variant][sz];
-                          const stok = currentStock[p.id] || 0;
-                          const hasVal = Number(massOrderQty[p.id] || 0) > 0;
-                          const multiSize = Object.keys(mp[kat][variant]).length > 1;
-                          return (
-                            <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', borderBottom:'1px solid #f1f5f9', background: hasVal ? '#eff6ff' : '#fff' }}>
-                              <div style={{ flex:1, minWidth:0 }}>
-                                <div style={{ fontSize:13, fontWeight:600, color:'#1C1208' }}>{variant}</div>
-                                <div style={{ fontSize:11, color:'#64748b' }}>
-                                  {multiSize ? <span style={{ marginRight:6 }}>{MASS_LABELS[sz]||sz}</span> : null}
-                                  stok: <span style={{ fontWeight:700, color: stok <= 0 ? '#ef4444' : '#94a3b8' }}>{stok}</span>
-                                </div>
-                              </div>
-                              <input
-                                type="number" min="0"
-                                value={massOrderQty[p.id] || ''}
-                                onChange={e => setMassOrderQty(q => ({ ...q, [p.id]: e.target.value }))}
-                                placeholder="0"
-                                style={{ width:76, padding:'8px 6px', textAlign:'center', border:`2px solid ${hasVal ? '#3b82f6' : '#e2e8f0'}`, borderRadius:8, fontSize:18, fontWeight:700, outline:'none', color:'#111', colorScheme:'light', background: hasVal ? '#eff6ff' : '#fff' }}
-                              />
-                            </div>
-                          );
-                        })
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
-            ) : (
-              // Desktop: pivot table
-              <div style={{ overflowX:'auto' }}>
-                <table style={{ borderCollapse:'collapse', tableLayout:'fixed', width:'auto', minWidth:'100%' }}>
-                  <colgroup>
-                    <col style={{ width:180 }} />
-                    {activeCols.map(sz => <col key={sz} style={{ width:76 }} />)}
-                  </colgroup>
-                  <thead>
-                    <tr style={{ background:'#f8f7f4' }}>
-                      <th style={{ padding:'6px 10px', textAlign:'left', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>Varian</th>
-                      {activeCols.map(sz => (
-                        <th key={sz} style={{ padding:'6px 8px', textAlign:'center', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>
-                          {MASS_LABELS[sz] || sz}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedKats.map(kat => (
-                      <React.Fragment key={kat}>
-                        <tr>
-                          <td colSpan={activeCols.length + 1} style={{ background: KAT_COLOR[kat]||'#f1f5f9', padding:'5px 10px', fontWeight:700, fontSize:11, color:'#374151', borderTop:'2px solid #e2e8f0' }}>
-                            {kat}
-                          </td>
-                        </tr>
-                        {Object.keys(mp[kat]).sort().map(variant => {
-                          const sizes = mp[kat][variant];
-                          return (
-                            <tr key={variant} style={{ borderBottom:'1px solid #f1f5f9' }}>
-                              <td style={{ padding:'4px 10px', fontSize:11, fontWeight:600, color:'#1C1208', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                                {variant}
-                              </td>
-                              {activeCols.map(sz => {
-                                const p = sizes[sz];
-                                if (!p) return <td key={sz} style={{ padding:'3px 4px', textAlign:'center', color:'#d1d5db', fontSize:11 }}>—</td>;
-                                const stok = currentStock[p.id] || 0;
-                                const hasVal = Number(massOrderQty[p.id] || 0) > 0;
-                                return (
-                                  <td key={sz} style={{ padding:'3px 4px', textAlign:'center' }}>
-                                    <input
-                                      type="number" min="0"
-                                      value={massOrderQty[p.id] || ''}
-                                      onChange={e => setMassOrderQty(q => ({ ...q, [p.id]: e.target.value }))}
-                                      placeholder="0"
-                                      style={{ width:'100%', padding:'5px 4px', textAlign:'center', border:`2px solid ${hasVal ? '#3b82f6' : '#e2e8f0'}`, borderRadius:6, fontSize:13, fontWeight:700, outline:'none', boxSizing:'border-box', background: hasVal ? '#eff6ff' : '#fff', color:'#111', colorScheme:'light' }}
-                                    />
-                                    <div style={{ fontSize:9, color: stok <= 0 ? '#ef4444' : '#94a3b8', marginTop:1 }}>stok:{stok}</div>
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          );
-                        })}
-                      </React.Fragment>
+            {/* Pivot grid */}
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ borderCollapse:'collapse', tableLayout:'fixed', width:'auto', minWidth: isMobile ? 'unset' : '100%' }}>
+                <colgroup>
+                  <col style={{ width: isMobile ? 95 : 180 }} />
+                  {activeCols.map(sz => <col key={sz} style={{ width: isMobile ? 50 : 76 }} />)}
+                </colgroup>
+                <thead>
+                  <tr style={{ background:'#f8f7f4' }}>
+                    <th style={{ padding: isMobile ? '5px 6px' : '6px 10px', textAlign:'left', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>Varian</th>
+                    {activeCols.map(sz => (
+                      <th key={sz} style={{ padding: isMobile ? '5px 4px' : '6px 8px', textAlign:'center', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>
+                        {MASS_LABELS[sz] || sz}
+                      </th>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedKats.map(kat => (
+                    <React.Fragment key={kat}>
+                      <tr>
+                        <td colSpan={activeCols.length + 1} style={{ background: KAT_COLOR[kat]||'#f1f5f9', padding:'5px 8px', fontWeight:700, fontSize:11, color:'#374151', borderTop:'2px solid #e2e8f0' }}>
+                          {kat}
+                        </td>
+                      </tr>
+                      {Object.keys(mp[kat]).sort().map(variant => {
+                        const sizes = mp[kat][variant];
+                        return (
+                          <tr key={variant} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                            <td style={{ padding: isMobile ? '3px 6px' : '4px 10px', fontSize: isMobile ? 10 : 11, fontWeight:600, color:'#1C1208', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                              {variant}
+                            </td>
+                            {activeCols.map(sz => {
+                              const p = sizes[sz];
+                              if (!p) return <td key={sz} style={{ padding:'3px 2px', textAlign:'center', color:'#d1d5db', fontSize:10 }}>—</td>;
+                              const stok = currentStock[p.id] || 0;
+                              const hasVal = Number(massOrderQty[p.id] || 0) > 0;
+                              return (
+                                <td key={sz} style={{ padding: isMobile ? '3px 2px' : '3px 4px', textAlign:'center' }}>
+                                  <input
+                                    type="number" min="0"
+                                    value={massOrderQty[p.id] || ''}
+                                    onChange={e => setMassOrderQty(q => ({ ...q, [p.id]: e.target.value }))}
+                                    placeholder="0"
+                                    style={{ width:'100%', padding: isMobile ? '6px 2px' : '5px 4px', textAlign:'center', border:`2px solid ${hasVal ? '#3b82f6' : '#e2e8f0'}`, borderRadius:6, fontSize: isMobile ? 14 : 13, fontWeight:700, outline:'none', boxSizing:'border-box', background: hasVal ? '#eff6ff' : '#fff', color:'#111', colorScheme:'light' }}
+                                  />
+                                  <div style={{ fontSize:9, color: stok <= 0 ? '#ef4444' : '#94a3b8', marginTop:1 }}>s:{stok}</div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             {/* Submit */}
             <div style={{ marginTop:16, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
