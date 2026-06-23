@@ -433,6 +433,30 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
         const KAT_ORDER   = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
         const KAT_COLOR   = { 'Lapis Legit':'#FBF5DF','Lapis Surabaya':'#dbeafe','Cookies':'#fce7f3','Gift Box':'#d1fae5' };
 
+        // Urutan varian sama dengan Stok by Rasa
+        const VARIANT_KEYWORDS = {
+          'Lapis Legit': ['original','spekulaas','spekulas','cheese','almond','choco','chocolate','pandan','prune','green','coffee','mocca','cempedak','durian','fruit'],
+          'Lapis Surabaya': ['_base_','rainbow','choco','chocolate','mix choco','mix choc','mix','pandan mix','pandan ovo','mocca','pandan cheese','pandan'],
+          'Cookies': ['kastangel','nastar prem','nastar durian','nastar','queker','sagu keju','s.keju','s keju','lidah kucing','l.kucing','blue','straw','chocodark','semprit','hazel','che alm','cheese alm','chocosoft','kue kacang','cookies legit','cookie legit','coconut','snow'],
+          'Gift Box': [],
+        };
+        const sortVariants = (variants, kat) => {
+          const keys = VARIANT_KEYWORDS[kat];
+          if (!keys || keys.length === 0) return [...variants].sort();
+          const score = v => {
+            const vn = v.toLowerCase();
+            const base = kat.toLowerCase();
+            if (keys.includes('_base_') && vn.replace(base,'').trim() === '') return keys.indexOf('_base_');
+            let bestIdx = 999, bestLen = 0;
+            keys.forEach((k, i) => {
+              if (k === '_base_') return;
+              if (vn.includes(k) && k.length > bestLen) { bestLen = k.length; bestIdx = i; }
+            });
+            return bestIdx;
+          };
+          return [...variants].sort((a, b) => score(a) - score(b));
+        };
+
         // Build pivot: { kat: { variant: { size: product } } }
         const mp = {};
         products.forEach(p => {
@@ -497,7 +521,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
                           {kat}
                         </td>
                       </tr>
-                      {Object.keys(mp[kat]).sort().map(variant => {
+                      {sortVariants(Object.keys(mp[kat]), kat).map(variant => {
                         const sizes = mp[kat][variant];
                         return (
                           <tr key={variant} style={{ borderBottom:'1px solid #f1f5f9' }}>
