@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 import { uid, today, fmtDate, S, DEFECT_REASONS, RETUR_REASONS, useIsMobile } from '../utils';
-import { Btn, FieldGroup } from '../components/UI';
+import { Btn, FieldGroup, Modal } from '../components/UI';
 
 const logActivity = async (user, action, description) => {
   await supabase.from('activity_log').insert({ id: uid(), user_id: user.id, user_name: user.name, action, description });
@@ -14,6 +14,7 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
   const [mainTab, setMainTab] = useState('input');
   const [activeTab, setActiveTab] = useState('in');
   const [saving, setSaving] = useState(false);
+  const [confirmStockModal, setConfirmStockModal] = useState(null); // { type:'cart'|'mass', items:[{name,unit,qty}], batch, date }
   const [summaryKat, setSummaryKat] = useState('all');
   const [summarySearch, setSummarySearch] = useState('');
   const [onlyHasStock, setOnlyHasStock] = useState(true);
@@ -199,29 +200,57 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
   //   Queker, S.keju, L.kucing, Blue Che, Straw Che, Chocodark, Semprit, Hazelnute,
   //   Che ALM, Chocosoft, Kue kacang, Cookies legit, Coconut cookies, Snow ball
   const VARIANT_KEYWORDS = {
+    // Urutan: original, spekoek, cheese, almond, chocolate, pandan, prune, green tea, coffee, mocca, cempedak, durian, fruit
     'Lapis Legit': [
-      'original','spekulaas','spekulas','cheese','almond',
-      'choco','chocolate','pandan','prune','green','coffee','mocca','cempedak','durian','fruit',
+      'original',
+      'spekoek', 'spekulas', 'spekulaas',
+      'cheese',
+      'almond',
+      'chocolate', 'choco',
+      'pandan',
+      'prune',
+      'green',
+      'coffee',
+      'mocca',
+      'cempedak',
+      'durian',
+      'fruit',
     ],
+    // Urutan: original, rainbow, chocolate, special, special chocolate, pandan special, ovomaltine, mocca, pandan cheese
     'Lapis Surabaya': [
-      '_base_','rainbow',
-      'choco','chocolate',          // Sur choc (no 'mix')
-      'mix choco','mix choc',       // Sur mix choc — longer so wins over 'mix' alone
-      'mix',                        // Sur.mix (plain mix)
-      'pandan mix','pandan ovo','mocca','pandan cheese','pandan',
+      '_base_',
+      'rainbow',
+      'chocolate', 'choco',
+      'special',
+      'special chocolate', 'special choco',   // lebih panjang dari 'chocolate'/'special' → menang
+      'pandan special',                        // lebih panjang dari 'pandan'/'special' → menang
+      'ovomaltine', 'ovo',
+      'mocca',
+      'pandan cheese',                         // lebih panjang dari 'pandan' → menang
+      'pandan',
     ],
+    // Urutan: kastengel, nastar pineapple, nastar premium 30, nastar premium 18, nastar durian, nastar, quacker, sagu keju, lidah kucing, blueberry, strawberry, choco chip/dark, semprit, hazelnut, almond cheese, chocolate chip satuan, kue kacang, cookies soft legit, coconut, snow drop
     'Cookies': [
-      'kastangel',
-      'nastar prem','nastar durian','nastar',  // prem/durian longer → win over plain 'nastar'
-      'queker',
-      'sagu keju','s.keju','s keju',
-      'lidah kucing','l.kucing',
-      'blue','straw',
-      'chocodark','semprit','hazel',
-      'che alm','cheese alm',
-      'chocosoft','kue kacang',
-      'cookies legit','cookie legit',
-      'coconut','snow',
+      'kastangel', 'kastengel',
+      'nastar pineapple', 'pineapple',
+      'nastar premium 30', 'prem 30',
+      'nastar premium 18', 'prem 18',
+      'nastar durian',
+      'nastar',
+      'quacker', 'queker',
+      'sagu keju', 's.keju', 's keju',
+      'lidah kucing', 'l.kucing',
+      'blueberry', 'blue',
+      'strawberry', 'straw',
+      'chocodark', 'choco dark', 'choco chip',
+      'semprit',
+      'hazelnut', 'hazel',
+      'almond cheese', 'che alm', 'cheese alm',
+      'chocolate chip', 'chocosoft',
+      'kue kacang',
+      'cookies legit', 'cookie legit', 'soft legit',
+      'coconut',
+      'snow',
     ],
     'Gift Box': [],
   };
@@ -503,7 +532,7 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
   const selConvTarget = convTargetsForForm.find(t => t.product.id === convertTargetId);
   const autoConvQty = selConvTarget?.isAuto && formQty ? Number(formQty) * selConvTarget.ratio : null;
 
-  return (
+  return (<>
     <div>
       {/* ── Main tab bar ─────────────────────────────────────────────────── */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:8 }}>
@@ -987,7 +1016,13 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
 
               {/* Submit */}
               <div style={{ marginTop:16, display:'flex', alignItems:'center', gap:12 }}>
-                <button onClick={handleMassSubmit} disabled={saving || totalFilled === 0 || !massBatch}
+                <button onClick={() => {
+                  const entries = Object.entries(massQty).filter(([,v]) => Number(v) > 0);
+                  if (entries.length === 0) return showToast('❌ Belum ada qty yang diisi');
+                  if (!massBatch) return showToast('❌ Kode batch wajib diisi');
+                  const previewItems = entries.map(([pid, qty]) => { const p = products.find(x=>x.id===pid); return { name: p?.name||'-', unit: p?.unit||'', qty: Number(qty) }; });
+                  setConfirmStockModal({ type:'mass', items: previewItems, batch: massBatch, date: massDate });
+                }} disabled={saving || totalFilled === 0 || !massBatch}
                   style={{ padding:'10px 24px', background: totalFilled > 0 && massBatch ? '#10b981' : '#94a3b8', color:'#fff', border:'none', borderRadius:8, fontWeight:700, fontSize:13, cursor: totalFilled > 0 && massBatch ? 'pointer' : 'not-allowed' }}>
                   {saving ? 'Menyimpan...' : `✅ Submit ${totalFilled} Produk`}
                 </button>
@@ -1313,7 +1348,10 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                           ))}
                         </tbody>
                       </table>
-                      <Btn onClick={handleSubmitAll} disabled={saving} color="#10b981" style={{ marginTop:12, width:'100%', fontSize:13 }}>
+                      <Btn onClick={() => {
+                        const previewItems = cart.map(item => ({ name: item.product_name, unit: item.unit, qty: item.qty, extra: item.returKondisi === 'rusak' ? '💔 Rusak' : item.returKondisi === 'repakai' ? '✅ Bagus' : '' }));
+                        setConfirmStockModal({ type:'cart', items: previewItems, batch: sharedBatch, date: sharedDate, tab: activeTab });
+                      }} disabled={saving || cart.length === 0} color="#10b981" style={{ marginTop:12, width:'100%', fontSize:13 }}>
                         {saving ? 'Menyimpan...' : `✅ Submit Semua (${cart.length} item)`}
                       </Btn>
                     </div>
@@ -1371,5 +1409,58 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
       )}
 
     </div>
-  );
+
+    {/* ── Konfirmasi Submit Stok ─────────────────────────────────────────── */}
+    {confirmStockModal && (
+      <Modal title="📋 Konfirmasi Input Stok" onClose={() => setConfirmStockModal(null)}>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
+            <div style={{ background:'#f8f7f4', borderRadius:8, padding:'10px 12px' }}>
+              <div style={{ fontSize:11, color:'#64748b', marginBottom:2 }}>Tanggal</div>
+              <div style={{ fontSize:14, fontWeight:700, color:'#1C1208' }}>📅 {fmtDate(confirmStockModal.date)}</div>
+            </div>
+            {confirmStockModal.batch && (
+              <div style={{ background:'#f8f7f4', borderRadius:8, padding:'10px 12px' }}>
+                <div style={{ fontSize:11, color:'#64748b', marginBottom:2 }}>Batch</div>
+                <div style={{ fontSize:14, fontWeight:700, color:'#1C1208' }}>📦 {confirmStockModal.batch}</div>
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize:12, fontWeight:700, color:'#64748b', marginBottom:6, textTransform:'uppercase', letterSpacing:.5 }}>
+            Daftar Item ({confirmStockModal.items.length})
+          </div>
+          <div style={{ maxHeight:300, overflowY:'auto', border:'1px solid #e2e8f0', borderRadius:8 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead>
+                <tr style={{ background:'#f8f7f4' }}>
+                  <th style={{ padding:'7px 10px', textAlign:'left', fontSize:11, color:'#64748b', fontWeight:600 }}>Produk</th>
+                  <th style={{ padding:'7px 10px', textAlign:'right', fontSize:11, color:'#64748b', fontWeight:600 }}>Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {confirmStockModal.items.map((item, i) => (
+                  <tr key={i} style={{ borderTop:'1px solid #f1f5f9' }}>
+                    <td style={{ padding:'8px 10px', fontSize:13 }}>
+                      {item.name}
+                      {item.extra && <span style={{ marginLeft:6, fontSize:11, color:'#64748b' }}>{item.extra}</span>}
+                    </td>
+                    <td style={{ padding:'8px 10px', fontSize:13, fontWeight:700, textAlign:'right', color:'#1C1208' }}>{item.qty} {item.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ marginTop:10, fontSize:12, color:'#64748b', textAlign:'right' }}>
+            Total: <b>{confirmStockModal.items.reduce((s,i) => s+i.qty, 0)}</b> pcs/unit
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:10 }}>
+          <Btn onClick={() => { setConfirmStockModal(null); confirmStockModal.type === 'mass' ? handleMassSubmit() : handleSubmitAll(); }} color="#10b981" style={{ flex:1 }} disabled={saving}>
+            {saving ? 'Menyimpan...' : '✅ Ya, Simpan'}
+          </Btn>
+          <Btn onClick={() => setConfirmStockModal(null)} color="#64748b" style={{ flex:1 }}>Cek Lagi</Btn>
+        </div>
+      </Modal>
+    )}
+  </>);
 }

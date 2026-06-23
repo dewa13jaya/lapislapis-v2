@@ -40,6 +40,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
   const [rescheduleModal, setRescheduleModal] = useState(null); // order object
   const [rescheduleData, setRescheduleData]   = useState({ date:'', notes:'' });
   const [cancelModal, setCancelModal]         = useState(null); // order object
+  const [confirmOrderModal, setConfirmOrderModal] = useState(null); // { type: 'mass'|'form', items: [...] }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const KAT_LIST   = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
@@ -458,7 +459,12 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
               </tbody>
             </table>
           )}
-          <Btn onClick={submitOrder} disabled={saving} color="#10b981" style={{ width: isMobile ? '100%' : 'auto' }}>{saving ? 'Menyimpan...' : '✅ Kirim Order ke Produksi'}</Btn>
+          <Btn onClick={() => {
+            if (!form.outlet_id) return showToast('❌ Pilih outlet tujuan');
+            if (form.items.length === 0) return showToast('❌ Tambahkan minimal 1 produk');
+            const outletName = outlets.find(o => o.id === form.outlet_id)?.name || '-';
+            setConfirmOrderModal({ type:'form', outletName, deliveryDate: form.delivery_date, notes: form.notes, items: form.items.map(i => ({ name: products.find(p=>p.id===i.product_id)?.name||'-', unit: products.find(p=>p.id===i.product_id)?.unit||'', qty: i.qty })) });
+          }} disabled={saving} color="#10b981" style={{ width: isMobile ? '100%' : 'auto' }}>{saving ? 'Menyimpan...' : '✅ Kirim Order ke Produksi'}</Btn>
         </div>
       )}
 
@@ -471,9 +477,9 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
 
         // Urutan varian sama dengan Stok by Rasa
         const VARIANT_KEYWORDS = {
-          'Lapis Legit': ['original','spekulaas','spekulas','cheese','almond','choco','chocolate','pandan','prune','green','coffee','mocca','cempedak','durian','fruit'],
-          'Lapis Surabaya': ['_base_','rainbow','choco','chocolate','mix choco','mix choc','mix','pandan mix','pandan ovo','mocca','pandan cheese','pandan'],
-          'Cookies': ['kastangel','nastar prem','nastar durian','nastar','queker','sagu keju','s.keju','s keju','lidah kucing','l.kucing','blue','straw','chocodark','semprit','hazel','che alm','cheese alm','chocosoft','kue kacang','cookies legit','cookie legit','coconut','snow'],
+          'Lapis Legit': ['original','spekoek','spekulas','spekulaas','cheese','almond','chocolate','choco','pandan','prune','green','coffee','mocca','cempedak','durian','fruit'],
+          'Lapis Surabaya': ['_base_','rainbow','chocolate','choco','special','special chocolate','special choco','pandan special','ovomaltine','ovo','mocca','pandan cheese','pandan'],
+          'Cookies': ['kastangel','kastengel','nastar pineapple','pineapple','nastar premium 30','prem 30','nastar premium 18','prem 18','nastar durian','nastar','quacker','queker','sagu keju','s.keju','s keju','lidah kucing','l.kucing','blueberry','blue','strawberry','straw','chocodark','choco dark','choco chip','semprit','hazelnut','hazel','almond cheese','che alm','cheese alm','chocolate chip','chocosoft','kue kacang','cookies legit','cookie legit','soft legit','coconut','snow'],
           'Gift Box': [],
         };
         const sortVariants = (variants, kat) => {
@@ -594,7 +600,13 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
             {/* Submit */}
             <div style={{ marginTop:16, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
               <Btn
-                onClick={submitMassOrder}
+                onClick={() => {
+                  if (!form.outlet_id) return showToast('❌ Pilih outlet tujuan');
+                  const previewItems = products.filter(p => Number(massOrderQty[p.id]||0) > 0).map(p => ({ name: p.name, unit: p.unit, qty: Number(massOrderQty[p.id]) }));
+                  if (previewItems.length === 0) return showToast('❌ Isi qty minimal 1 produk');
+                  const outletName = outlets.find(o => o.id === form.outlet_id)?.name || '-';
+                  setConfirmOrderModal({ type:'mass', outletName, deliveryDate: form.delivery_date, notes: form.notes, items: previewItems });
+                }}
                 disabled={saving || totalFilled === 0 || !form.outlet_id}
                 color={totalFilled > 0 && form.outlet_id ? '#10b981' : '#94a3b8'}
               >
@@ -854,6 +866,59 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       )}
 
       {/* Cancel Confirm Modal */}
+      {/* ── Konfirmasi Order Modal ───────────────────────────────────────────── */}
+      {confirmOrderModal && (
+        <Modal title="📋 Konfirmasi Order" onClose={() => setConfirmOrderModal(null)}>
+          <div style={{ marginBottom:16 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
+              <div style={{ background:'#f8f7f4', borderRadius:8, padding:'10px 12px' }}>
+                <div style={{ fontSize:11, color:'#64748b', marginBottom:2 }}>Outlet</div>
+                <div style={{ fontSize:14, fontWeight:700, color:'#1C1208' }}>🏪 {confirmOrderModal.outletName}</div>
+              </div>
+              <div style={{ background:'#f8f7f4', borderRadius:8, padding:'10px 12px' }}>
+                <div style={{ fontSize:11, color:'#64748b', marginBottom:2 }}>Tanggal Kirim</div>
+                <div style={{ fontSize:14, fontWeight:700, color:'#1C1208' }}>📅 {fmtDate(confirmOrderModal.deliveryDate)}</div>
+              </div>
+            </div>
+            {confirmOrderModal.notes && (
+              <div style={{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:8, padding:'8px 12px', marginBottom:12, fontSize:13, color:'#92400e' }}>
+                📝 {confirmOrderModal.notes}
+              </div>
+            )}
+            <div style={{ fontSize:12, fontWeight:700, color:'#64748b', marginBottom:6, textTransform:'uppercase', letterSpacing:.5 }}>
+              Daftar Produk ({confirmOrderModal.items.length} item)
+            </div>
+            <div style={{ maxHeight:280, overflowY:'auto', border:'1px solid #e2e8f0', borderRadius:8 }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <thead>
+                  <tr style={{ background:'#f8f7f4' }}>
+                    <th style={{ padding:'7px 10px', textAlign:'left', fontSize:11, color:'#64748b', fontWeight:600 }}>Produk</th>
+                    <th style={{ padding:'7px 10px', textAlign:'right', fontSize:11, color:'#64748b', fontWeight:600 }}>Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {confirmOrderModal.items.map((item, i) => (
+                    <tr key={i} style={{ borderTop:'1px solid #f1f5f9' }}>
+                      <td style={{ padding:'8px 10px', fontSize:13 }}>{item.name}</td>
+                      <td style={{ padding:'8px 10px', fontSize:13, fontWeight:700, textAlign:'right', color:'#1C1208' }}>{item.qty} {item.unit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop:10, fontSize:12, color:'#64748b', textAlign:'right' }}>
+              Total: <b>{confirmOrderModal.items.reduce((s,i) => s+i.qty, 0)}</b> pcs/unit
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:10 }}>
+            <Btn onClick={() => { setConfirmOrderModal(null); confirmOrderModal.type === 'mass' ? submitMassOrder() : submitOrder(); }} color="#10b981" style={{ flex:1 }} disabled={saving}>
+              {saving ? 'Menyimpan...' : '✅ Ya, Kirim Order'}
+            </Btn>
+            <Btn onClick={() => setConfirmOrderModal(null)} color="#64748b" style={{ flex:1 }}>Cek Lagi</Btn>
+          </div>
+        </Modal>
+      )}
+
       {cancelModal && (
         <Modal title="Batalkan Order?" onClose={() => setCancelModal(null)}>
           <div style={{ marginBottom:22 }}>
