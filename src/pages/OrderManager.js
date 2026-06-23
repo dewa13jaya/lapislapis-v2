@@ -725,63 +725,96 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
           : filteredOrders.map(order => {
             const outlet = outlets.find(o => o.id === order.outlet_id);
             return (
-              <div key={order.id} style={{ background:'#fff', borderRadius:12, padding: isMobile ? 16 : 20, boxShadow:'0 1px 4px rgba(0,0,0,.07)' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    {/* Order no + status */}
-                    <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', marginBottom:6 }}>
-                      <span style={{ fontWeight:800, fontSize: isMobile ? 17 : 15 }}>{order.order_no}</span>
-                      <StatusBadge status={order.status} />
-                      {!isMobile && order.driver_name && <span style={{ fontSize:12, color:'#64748b' }}>🚗 {order.driver_name} {order.vehicle_no && `· ${order.vehicle_no}`}</span>}
-                    </div>
-                    {/* Outlet + pembuat */}
-                    <div style={{ fontSize: isMobile ? 14 : 13, color:'#64748b', marginBottom:4 }}>
-                      🏪 {outlet?.name||'-'} · Oleh: {order.created_by_name||'-'}
-                    </div>
-                    {isMobile && order.driver_name && (
-                      <div style={{ fontSize:13, color:'#64748b', marginBottom:4 }}>🚗 {order.driver_name} {order.vehicle_no && `· ${order.vehicle_no}`}</div>
-                    )}
-                    {/* Tanggal kirim */}
-                    {(() => {
-                      const todayStr = today();
-                      const diff = Math.round((new Date(order.delivery_date) - new Date(todayStr)) / 86400000);
-                      const isRescheduled = order.original_delivery_date && order.original_delivery_date !== order.delivery_date;
-                      const dateColor = diff < 0 ? '#ef4444' : diff === 0 ? '#B49A35' : '#64748b';
-                      const dateLabel = diff < 0 ? `(${Math.abs(diff)} hari lalu)` : diff === 0 ? '(hari ini)' : diff === 1 ? '(besok)' : `(${diff} hari lagi)`;
-                      return (
-                        <div style={{ fontSize: isMobile ? 14 : 13, marginBottom:4, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-                          <span style={{ color: dateColor, fontWeight:600 }}>📅 Kirim: {fmtDate(order.delivery_date)} {dateLabel}</span>
-                          {order.actual_delivery_date && order.actual_delivery_date !== order.delivery_date && (
-                            <span style={{ color:'#8b5cf6', fontSize:12 }}>· Aktual: {fmtDate(order.actual_delivery_date)}</span>
-                          )}
-                          {isRescheduled && (
-                            <span style={{ background:'#FBF5DF', color:'#6B5418', padding:'2px 8px', borderRadius:10, fontSize:11, fontWeight:700 }}>🔄 Dijadwal ulang</span>
-                          )}
-                        </div>
-                      );
-                    })()}
-                    {order.notes && <div style={{ fontSize: isMobile ? 13 : 12, color:'#94a3b8', marginBottom:2 }}>📝 {order.notes}</div>}
-                    {order.reschedule_notes && <div style={{ fontSize: isMobile ? 13 : 11, color:'#B49A35', marginBottom:2 }}>📋 Alasan reschedule: {order.reschedule_notes}</div>}
-                  </div>
-                  {/* Desktop action buttons — on right */}
-                  {!isMobile && <ActionButtons order={order} />}
-                </div>
+              <div key={order.id} style={{ background:'#fff', borderRadius:12, boxShadow:'0 1px 4px rgba(0,0,0,.07)', overflow:'hidden' }}>
+                {(() => {
+                  const todayStr = today();
+                  const diff = Math.round((new Date(order.delivery_date) - new Date(todayStr)) / 86400000);
+                  const isRescheduled = order.original_delivery_date && order.original_delivery_date !== order.delivery_date;
+                  const dateColor = diff < 0 ? '#ef4444' : diff === 0 ? '#B49A35' : diff === 1 ? '#10b981' : '#64748b';
+                  const dateLabel = diff < 0 ? `${Math.abs(diff)} hari lalu` : diff === 0 ? 'Hari ini' : diff === 1 ? 'Besok' : `${diff} hari lagi`;
+                  const itemCount = (order.order_items||[]).length;
+                  const hasReject = (order.order_items||[]).some(i => i.qty_rejected > 0);
 
-                {/* Items pills */}
-                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop: isMobile ? 10 : 8 }}>
-                  {(order.order_items||[]).map((item,i) => {
-                    const p = products.find(x => x.id === item.product_id);
+                  if (isMobile) {
+                    // ── MOBILE: compact card ──────────────────────────────────
                     return (
-                      <span key={i} style={{ background:'#f8f7f4', border:'1px solid #e2e8f0', padding: isMobile ? '6px 12px' : '4px 10px', borderRadius:6, fontSize: isMobile ? 13 : 12 }}>
-                        {p?.name} × {item.qty}
-                        {item.qty_rejected > 0 && <span style={{ color:'#ef4444', marginLeft:4 }}>(-{item.qty_rejected} reject)</span>}
-                      </span>
+                      <div style={{ padding:'14px 16px' }}>
+                        {/* Row 1: order no + status */}
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6 }}>
+                          <span style={{ fontWeight:800, fontSize:16, color:'#1C1208' }}>{order.order_no}</span>
+                          <StatusBadge status={order.status} />
+                        </div>
+                        {/* Row 2: outlet */}
+                        <div style={{ fontSize:14, fontWeight:600, color:'#374151', marginBottom:3 }}>
+                          🏪 {outlet?.name||'-'}
+                        </div>
+                        {/* Row 3: tanggal + label */}
+                        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom: order.notes || order.reschedule_notes ? 4 : 6 }}>
+                          <span style={{ fontSize:13, color: dateColor, fontWeight:600 }}>
+                            📅 {fmtDate(order.delivery_date)}
+                          </span>
+                          <span style={{ fontSize:11, fontWeight:700, background: diff < 0 ? '#fee2e2' : diff === 0 ? '#FBF5DF' : diff === 1 ? '#d1fae5' : '#f1f5f9', color: dateColor, padding:'2px 8px', borderRadius:10 }}>
+                            {dateLabel}
+                          </span>
+                          {isRescheduled && <span style={{ fontSize:11, background:'#FBF5DF', color:'#6B5418', padding:'2px 6px', borderRadius:10, fontWeight:700 }}>🔄 Dijadwal ulang</span>}
+                        </div>
+                        {order.notes && <div style={{ fontSize:12, color:'#94a3b8', marginBottom:4 }}>📝 {order.notes}</div>}
+                        {order.reschedule_notes && <div style={{ fontSize:12, color:'#B49A35', marginBottom:4 }}>📋 {order.reschedule_notes}</div>}
+                        {/* Row 4: meta info */}
+                        <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:10, flexWrap:'wrap' }}>
+                          <span style={{ fontSize:12, color:'#94a3b8' }}>Oleh: {order.created_by_name||'-'}</span>
+                          <span style={{ fontSize:12, color:'#94a3b8' }}>·</span>
+                          <span style={{ fontSize:12, color: hasReject ? '#ef4444' : '#94a3b8', fontWeight: hasReject ? 700 : 400 }}>
+                            {itemCount} produk{hasReject ? ' · ada reject' : ''}
+                          </span>
+                          {order.driver_name && <><span style={{ fontSize:12, color:'#94a3b8' }}>·</span><span style={{ fontSize:12, color:'#64748b' }}>🚗 {order.driver_name}</span></>}
+                        </div>
+                        <ActionButtons order={order} />
+                      </div>
                     );
-                  })}
-                </div>
+                  }
 
-                {/* Mobile action buttons — below */}
-                {isMobile && <ActionButtons order={order} />}
+                  // ── DESKTOP: full card with chips ─────────────────────────
+                  return (
+                    <div style={{ padding:20 }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', marginBottom:6 }}>
+                            <span style={{ fontWeight:800, fontSize:15 }}>{order.order_no}</span>
+                            <StatusBadge status={order.status} />
+                            {order.driver_name && <span style={{ fontSize:12, color:'#64748b' }}>🚗 {order.driver_name} {order.vehicle_no && `· ${order.vehicle_no}`}</span>}
+                          </div>
+                          <div style={{ fontSize:13, color:'#64748b', marginBottom:4 }}>
+                            🏪 {outlet?.name||'-'} · Oleh: {order.created_by_name||'-'}
+                          </div>
+                          <div style={{ fontSize:13, marginBottom:4, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                            <span style={{ color: dateColor, fontWeight:600 }}>📅 Kirim: {fmtDate(order.delivery_date)} ({dateLabel})</span>
+                            {order.actual_delivery_date && order.actual_delivery_date !== order.delivery_date && (
+                              <span style={{ color:'#8b5cf6', fontSize:12 }}>· Aktual: {fmtDate(order.actual_delivery_date)}</span>
+                            )}
+                            {isRescheduled && (
+                              <span style={{ background:'#FBF5DF', color:'#6B5418', padding:'2px 8px', borderRadius:10, fontSize:11, fontWeight:700 }}>🔄 Dijadwal ulang</span>
+                            )}
+                          </div>
+                          {order.notes && <div style={{ fontSize:12, color:'#94a3b8', marginBottom:2 }}>📝 {order.notes}</div>}
+                          {order.reschedule_notes && <div style={{ fontSize:11, color:'#B49A35', marginBottom:2 }}>📋 Alasan reschedule: {order.reschedule_notes}</div>}
+                        </div>
+                        <ActionButtons order={order} />
+                      </div>
+                      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:8 }}>
+                        {(order.order_items||[]).map((item,i) => {
+                          const p = products.find(x => x.id === item.product_id);
+                          return (
+                            <span key={i} style={{ background:'#f8f7f4', border:'1px solid #e2e8f0', padding:'4px 10px', borderRadius:6, fontSize:12 }}>
+                              {p?.name} × {item.qty}
+                              {item.qty_rejected > 0 && <span style={{ color:'#ef4444', marginLeft:4 }}>(-{item.qty_rejected} reject)</span>}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}

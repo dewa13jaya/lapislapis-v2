@@ -13,7 +13,7 @@ export function useIsMobile(breakpoint = 768) {
 
 // ─── UTILITIES ────────────────────────────────────────────────────────────────
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6).toUpperCase();
-export const today = () => new Date().toISOString().slice(0,10);
+export const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 export const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric'}) : '-';
 export const fmtDateTime = (d) => d ? new Date(d).toLocaleString('id-ID',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-';
 export const fmtMoney = (n) => 'Rp ' + Number(n||0).toLocaleString('id-ID');
