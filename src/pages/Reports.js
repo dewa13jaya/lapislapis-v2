@@ -99,8 +99,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
   // ── Shared: orders in date range (non-cancelled) — useMemo ─────────────────
   const rangeOrders = useMemo(() => orders.filter(o =>
     !['cancelled'].includes(o.status) && inRange(o.delivery_date)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [orders, dateFrom, dateTo]);
+  ), [orders, dateFrom, dateTo]); // inRange dibuat ulang tiap render tapi deps-nya dateFrom/dateTo
 
   // ── TAB 1: Order per Outlet ───────────────────────────────────────────────
   const outletReport = visibleOutlets
@@ -187,7 +186,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
       return { product: p, masuk, keluar, retur, saldo: currentStock[p.id] || 0 };
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  , [products, stockIn, stockOut, returns, currentStock, dateFrom, dateTo, filterKat, filterUkuran]);
+  , [products, stockIn, stockOut, returns, currentStock, dateFrom, dateTo, filterKat, filterUkuran]); // inRange inline deps
 
   // ── TAB RETUR: Analisis Retur ─────────────────────────────────────────────
   const returInRange = returns.filter(r => inRange(r.date));
