@@ -215,7 +215,15 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
   };
 
   // ── Filtered + sorted orders ──────────────────────────────────────────────
+  // Sales hanya lihat outlet yang di-assign ke mereka
+  const isSalesRole = ['sales', 'kepala_sales'].includes(user?.role);
+
   const filteredOrders = useMemo(() => orders
+    .filter(o => {
+      if (isSalesRole && assignedOutletIds.length > 0)
+        return assignedOutletIds.includes(o.outlet_id);
+      return true;
+    })
     .filter(o => filter === 'all' || o.status === filter)
     .filter(o => {
       if (!search) return true;
@@ -232,7 +240,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       if (sortBy === 'newest') return b.delivery_date.localeCompare(a.delivery_date) || b.order_no.localeCompare(a.order_no);
       if (sortBy === 'oldest') return a.delivery_date.localeCompare(b.delivery_date) || a.order_no.localeCompare(b.order_no);
       return 0;
-    }), [orders, filter, search, dateFrom, dateTo, sortBy, outlets]);
+    }), [orders, filter, search, dateFrom, dateTo, sortBy, outlets, isSalesRole, assignedOutletIds]);
 
   // ── ProductionDetail full-page view ──────────────────────────────────────
   if (productionOrder) {
