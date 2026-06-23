@@ -32,12 +32,13 @@ export const canAccess = (user, feature) => {
 
 // ─── SHARED STYLES ────────────────────────────────────────────────────────────
 export const S = {
-  input: { width:'100%', padding:'9px 12px', border:'1.5px solid #e2e8f0', borderRadius:8, fontSize:13, outline:'none', boxSizing:'border-box', background:'#fff', fontFamily:'inherit' },
-  btn:   { padding:'9px 18px', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:600 },
-  btnSm: { padding:'6px 12px', color:'#fff', border:'none', borderRadius:6, cursor:'pointer', fontSize:11, fontWeight:600 },
-  th:    { padding:'10px 12px', textAlign:'left', fontSize:11, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' },
-  td:    { padding:'10px 12px', fontSize:13 },
-  label: { fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:4 },
+  // fontSize:16 pada input penting — mencegah iOS auto-zoom saat focus
+  input: { width:'100%', padding:'11px 14px', border:'1.5px solid #e2e8f0', borderRadius:10, fontSize:16, outline:'none', boxSizing:'border-box', background:'#fff', fontFamily:'inherit' },
+  btn:   { padding:'12px 22px', color:'#fff', border:'none', borderRadius:10, cursor:'pointer', fontSize:15, fontWeight:600 },
+  btnSm: { padding:'9px 14px', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:600 },
+  th:    { padding:'11px 12px', textAlign:'left', fontSize:12, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' },
+  td:    { padding:'11px 12px', fontSize:14 },
+  label: { fontSize:13, fontWeight:600, color:'#374151', display:'block', marginBottom:6 },
   card:  { background:'#fff', borderRadius:12, padding:20, boxShadow:'0 1px 4px rgba(0,0,0,.07)' },
 };
 

@@ -20,11 +20,11 @@ export function printSJSementara(order, products, outlets, staff = []) {
     const p = products.find(x => x.id === item.product_id) || {};
     const qtyKirim = item.qty_delivered ?? item.qty;
     return `<tr>
-      <td style="border:1px solid #ccc;padding:8px;text-align:center">${idx + 1}</td>
-      <td style="border:1px solid #ccc;padding:8px">${p.name || '-'}</td>
-      <td style="border:1px solid #ccc;padding:8px;text-align:center">${p.unit || '-'}</td>
-      <td style="border:1px solid #ccc;padding:8px;text-align:center">${item.qty}</td>
-      <td style="border:1px solid #ccc;padding:8px;text-align:center"><b>${qtyKirim}</b></td>
+      <td style="border:1px solid #ccc;padding:10px 8px;text-align:center">${idx + 1}</td>
+      <td style="border:1px solid #ccc;padding:10px 8px">${p.name || '-'}</td>
+      <td style="border:1px solid #ccc;padding:10px 8px;text-align:center">${p.unit || '-'}</td>
+      <td style="border:1px solid #ccc;padding:10px 8px;text-align:center">${item.qty}</td>
+      <td style="border:1px solid #ccc;padding:10px 8px;text-align:center"><b>${qtyKirim}</b></td>
     </tr>`;
   }).join('');
   const emptyRows = Array(Math.max(0, 5 - (order.order_items || []).length))
@@ -32,19 +32,31 @@ export function printSJSementara(order, products, outlets, staff = []) {
     .join('');
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Surat Jalan ${order.order_no}</title>
 <style>
-  @page{margin:18mm} body{font-family:Arial,sans-serif;font-size:12px;color:#111}
-  h1{font-size:20px;margin:0;letter-spacing:2px}
+  @page{margin:18mm}
+  /* Screen: readable preview di HP */
+  body{font-family:Arial,sans-serif;font-size:15px;color:#111;padding:8px;box-sizing:border-box}
+  h1{font-size:22px;margin:0;letter-spacing:2px}
   table{width:100%;border-collapse:collapse;margin-top:10px}
-  th{background:#1C1208;color:#fff;padding:8px;text-align:center;border:1px solid #ccc;font-size:11px}
+  th{background:#1C1208;color:#fff;padding:10px 8px;text-align:center;border:1px solid #ccc;font-size:13px}
+  td{font-size:14px}
   .ttd{display:flex;justify-content:space-between;margin-top:40px}
-  .ttd-box{text-align:center;width:150px}
-  .ttd-line{border-top:1px solid #333;margin-top:56px;padding-top:4px;font-size:11px}
-  .sj-badge{display:inline-block;background:#FBF5DF;color:#6B5418;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:bold;border:1px solid #B49A35;margin-top:4px}
-  @media print{.no-print{display:none}}
+  .ttd-box{text-align:center;width:30%}
+  .ttd-line{border-top:1px solid #333;margin-top:56px;padding-top:4px;font-size:12px}
+  .sj-badge{display:inline-block;background:#FBF5DF;color:#6B5418;padding:4px 12px;border-radius:4px;font-size:13px;font-weight:bold;border:1px solid #B49A35;margin-top:4px}
+  .cetak-btn{display:block;width:100%;padding:14px;background:#1C1208;color:#fff;border:none;border-radius:10px;cursor:pointer;font-size:16px;font-weight:700;margin-bottom:16px;letter-spacing:.5px}
+  /* Print: compact untuk kertas */
+  @media print{
+    .no-print{display:none}
+    body{font-size:12px;padding:0}
+    th{font-size:11px;padding:7px 6px}
+    td{font-size:12px}
+    h1{font-size:18px}
+  }
 </style></head><body>
-<button class="no-print" onclick="window.print()" style="margin-bottom:12px;padding:8px 20px;background:#1C1208;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ Cetak</button>
+<button class="no-print cetak-btn" onclick="window.print()">🖨️ Cetak Surat Jalan</button>
 <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1C1208;padding-bottom:10px;margin-bottom:10px">
   <div><h1>LAPISLAPIS</h1><div style="font-size:11px;color:#555">Kemayoran, Jakarta Pusat</div></div>
   <div style="text-align:right">
@@ -118,19 +130,29 @@ export function printSJFinal(order, products, outlets, staff = []) {
     .join('');
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Surat Jalan Final ${order.order_no}</title>
 <style>
-  @page{margin:18mm} body{font-family:Arial,sans-serif;font-size:12px;color:#111}
-  h1{font-size:20px;margin:0;letter-spacing:2px}
+  @page{margin:18mm}
+  body{font-family:Arial,sans-serif;font-size:15px;color:#111;padding:8px;box-sizing:border-box}
+  h1{font-size:22px;margin:0;letter-spacing:2px}
   table{width:100%;border-collapse:collapse;margin-top:10px}
-  th{background:#1C1208;color:#fff;padding:8px;text-align:center;border:1px solid #ccc;font-size:11px}
+  th{background:#1C1208;color:#fff;padding:10px 8px;text-align:center;border:1px solid #ccc;font-size:13px}
+  td{font-size:14px}
   .ttd{display:flex;justify-content:space-between;margin-top:40px}
-  .ttd-box{text-align:center;width:150px}
-  .ttd-line{border-top:1px solid #333;margin-top:56px;padding-top:4px;font-size:11px}
-  .sj-badge{display:inline-block;background:#d1fae5;color:#065f46;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:bold;border:1px solid #10b981;margin-top:4px}
-  @media print{.no-print{display:none}}
+  .ttd-box{text-align:center;width:30%}
+  .ttd-line{border-top:1px solid #333;margin-top:56px;padding-top:4px;font-size:12px}
+  .sj-badge{display:inline-block;background:#d1fae5;color:#065f46;padding:4px 12px;border-radius:4px;font-size:13px;font-weight:bold;border:1px solid #10b981;margin-top:4px}
+  .cetak-btn{display:block;width:100%;padding:14px;background:#1C1208;color:#fff;border:none;border-radius:10px;cursor:pointer;font-size:16px;font-weight:700;margin-bottom:16px;letter-spacing:.5px}
+  @media print{
+    .no-print{display:none}
+    body{font-size:12px;padding:0}
+    th{font-size:11px;padding:7px 6px}
+    td{font-size:12px}
+    h1{font-size:18px}
+  }
 </style></head><body>
-<button class="no-print" onclick="window.print()" style="margin-bottom:12px;padding:8px 20px;background:#1C1208;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ Cetak</button>
+<button class="no-print cetak-btn" onclick="window.print()">🖨️ Cetak Surat Jalan</button>
 <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1C1208;padding-bottom:10px;margin-bottom:10px">
   <div><h1>LAPISLAPIS</h1><div style="font-size:11px;color:#555">Kemayoran, Jakarta Pusat</div></div>
   <div style="text-align:right">
