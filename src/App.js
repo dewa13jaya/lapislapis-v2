@@ -124,7 +124,7 @@ function MainApp() {
       outMap[x.product_id] = (outMap[x.product_id] || 0) + Number(x.qty);
     });
     returns.forEach(x => {
-      if (!['expired_rusak', 'konversi'].includes(x.return_type))
+      if (!['expired_rusak', 'konversi', 'rusak_pengiriman'].includes(x.return_type))
         returMap[x.product_id] = (returMap[x.product_id] || 0) + Number(x.qty);
     });
     orders

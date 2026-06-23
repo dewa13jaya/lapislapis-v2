@@ -198,10 +198,13 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       const rejQty = Number(rd.qty || 0);
       if (rejQty > 0) {
         hasReject = true;
-        await supabase.from('order_items').update({ qty_rejected: rejQty, qty_delivered: item.qty - rejQty, reject_reason: rd.reason||'' }).eq('id', item.id);
-        await supabase.from('returns').insert({ id: uid(), product_id: item.product_id, qty: rejQty, date: today(), outlet_id: order.outlet_id, order_id: order.id, reason: rd.reason||'Reject pengiriman', return_type: 'reject_pengiriman', created_by: user.id, created_by_name: user.name });
+        const isRusak = rd.kondisi === 'rusak';
+        // rusak_pengiriman = stok TIDAK balik; reject_pengiriman = stok balik ke gudang
+        const returnType = isRusak ? 'rusak_pengiriman' : 'reject_pengiriman';
+        await supabase.from('order_items').update({ qty_rejected: rejQty, qty_delivered: item.qty - rejQty, reject_reason: rd.reason||'', reject_kondisi: isRusak ? 'rusak' : 'bagus' }).eq('id', item.id);
+        await supabase.from('returns').insert({ id: uid(), product_id: item.product_id, qty: rejQty, date: today(), outlet_id: order.outlet_id, order_id: order.id, reason: rd.reason||'Reject pengiriman', return_type: returnType, created_by: user.id, created_by_name: user.name });
         const p = products.find(x => x.id === item.product_id);
-        await logActivity(user, 'reject', `Reject ${rejQty} ${p?.unit||''} ${p?.name||''} dari order ${order.order_no} — ${rd.reason||''}`);
+        await logActivity(user, 'reject', `Reject ${rejQty} ${p?.unit||''} ${p?.name||''} dari order ${order.order_no} — ${rd.reason||''} [${isRusak ? 'RUSAK, stok tidak balik' : 'Bagus, stok balik'}]`);
       }
       if (item.qty - Number(rd.qty||0) > 0) allRejected = false;
     }
@@ -875,6 +878,29 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
                       </select>
                     </FieldGroup>
                   </div>
+                  {/* Kondisi barang — menentukan apakah stok balik atau tidak */}
+                  {Number(rejectData[item.id]?.qty||0) > 0 && (
+                    <div style={{ marginTop:8 }}>
+                      <div style={{ fontSize:12, fontWeight:600, color:'#374151', marginBottom:6 }}>Kondisi Barang Diretur</div>
+                      <div style={{ display:'flex', gap:8 }}>
+                        {[
+                          { v:'bagus', label:'✅ Masih Bagus', sub:'stok balik ke gudang', activeColor:'#10b981', activeBg:'#f0fdf4' },
+                          { v:'rusak', label:'💔 Rusak / Tidak Layak', sub:'stok tidak balik', activeColor:'#ef4444', activeBg:'#fee2e2' },
+                        ].map(opt => {
+                          const active = (rejectData[item.id]?.kondisi || 'bagus') === opt.v;
+                          return (
+                            <button key={opt.v}
+                              onClick={() => setRejectData(d => ({...d, [item.id]: {...(d[item.id]||{}), kondisi: opt.v}}))}
+                              style={{ flex:1, padding:'10px 8px', fontSize:12, fontWeight:700, border:`2px solid ${active ? opt.activeColor : '#e2e8f0'}`, borderRadius:10, cursor:'pointer', background: active ? opt.activeBg : '#fff', color: active ? opt.activeColor : '#94a3b8', transition:'all .15s' }}
+                            >
+                              <div>{opt.label}</div>
+                              <div style={{ fontSize:10, fontWeight:400, marginTop:2 }}>{opt.sub}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

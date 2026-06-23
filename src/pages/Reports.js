@@ -182,7 +182,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
     .map(p => {
       const masuk  = stockIn.filter(x => x.product_id === p.id && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
       const keluar = stockOut.filter(x => x.product_id === p.id && inRange(x.date)).reduce((s,x) => s+Number(x.qty), 0);
-      const retur  = returns.filter(x => x.product_id === p.id && inRange(x.date) && !['expired_rusak','konversi'].includes(x.return_type)).reduce((s,x) => s+Number(x.qty), 0);
+      const retur  = returns.filter(x => x.product_id === p.id && inRange(x.date) && !['expired_rusak','konversi','rusak_pengiriman'].includes(x.return_type)).reduce((s,x) => s+Number(x.qty), 0);
       return { product: p, masuk, keluar, retur, saldo: currentStock[p.id] || 0 };
     })
   , [products, stockIn, stockOut, returns, currentStock, dateFrom, dateTo, filterKat, filterUkuran]);
@@ -223,7 +223,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
   })();
 
   const returByKondisi = (() => {
-    const labels = { kondisi_ok:'✅ Kondisi OK', expired_rusak:'🗑️ Expired/Rusak', konversi:'✂️ Konversi' };
+    const labels = { kondisi_ok:'✅ Kondisi OK', expired_rusak:'🗑️ Expired/Rusak', rusak_pengiriman:'💔 Rusak saat Pengiriman', konversi:'✂️ Konversi' };
     const map = {};
     returInRange.forEach(r => {
       const key = labels[r.return_type] || r.return_type || 'Lainnya';
@@ -234,10 +234,12 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
 
   const totalReturQty = returInRange.reduce((s, r) => s + Number(r.qty || 0), 0);
 
-  // ── TAB PRODUKSI VS PENJUALAN ─────────────────────────────────────────────
+  // ── TAB PRODUKSI VS PENGIRIMAN ────────────────────────────────────────────
   const produksiReport = (() => {
+    // packed = sudah disiapkan untuk kirim; delivered/partial_delivered = sudah terkirim
     const produksiOrders = orders.filter(o =>
-      ['delivered','partial_delivered'].includes(o.status) && inRange(o.delivery_date)
+      ['delivered','partial_delivered','packed'].includes(o.status) &&
+      inRange(o.delivery_date || o.order_date || o.created_at?.slice(0,10))
     );
     return products
       .filter(p => !filterKat || p.kategori === filterKat)
@@ -245,23 +247,23 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
         const diproduksi = stockIn
           .filter(x => x.product_id === p.id && inRange(x.date))
           .reduce((s, x) => s + Number(x.qty || 0), 0);
-        const terjual = produksiOrders
+        const terkirim = produksiOrders
           .flatMap(o => o.order_items || [])
           .filter(i => i.product_id === p.id)
           .reduce((s, i) => s + Number(i.qty_delivered ?? i.qty ?? 0), 0);
         const diretur = returInRange
-          .filter(r => r.product_id === p.id && r.return_type === 'expired_rusak')
+          .filter(r => r.product_id === p.id && ['expired_rusak','rusak_pengiriman'].includes(r.return_type))
           .reduce((s, r) => s + Number(r.qty || 0), 0);
-        const efisiensi = diproduksi > 0 ? Math.round((terjual / diproduksi) * 100) : null;
-        return { product: p, diproduksi, terjual, diretur, efisiensi };
+        const efisiensi = diproduksi > 0 ? Math.round((terkirim / diproduksi) * 100) : null;
+        return { product: p, diproduksi, terkirim, diretur, efisiensi };
       })
-      .filter(r => r.diproduksi > 0 || r.terjual > 0)
+      .filter(r => r.diproduksi > 0 || r.terkirim > 0)
       .sort((a, b) => b.diproduksi - a.diproduksi);
   })();
 
   const totalDiproduksi = produksiReport.reduce((s, r) => s + r.diproduksi, 0);
-  const totalTerjual    = produksiReport.reduce((s, r) => s + r.terjual, 0);
-  const globalEfisiensi = totalDiproduksi > 0 ? Math.round((totalTerjual / totalDiproduksi) * 100) : 0;
+  const totalTerkirim   = produksiReport.reduce((s, r) => s + r.terkirim, 0);
+  const globalEfisiensi = totalDiproduksi > 0 ? Math.round((totalTerkirim / totalDiproduksi) * 100) : 0;
 
   // ── Export Excel ──────────────────────────────────────────────────────────
   const exportExcel = async () => {
@@ -821,16 +823,16 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
           {/* Summary cards */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, marginBottom:16 }}>
             <StatCard label="Total Diproduksi"  val={totalDiproduksi}        color="#3b82f6" />
-            <StatCard label="Total Terjual"      val={totalTerjual}           color="#10b981" />
+            <StatCard label="Total Terkirim"     val={totalTerkirim}          color="#10b981" />
             <StatCard label="Efisiensi Global"   val={`${globalEfisiensi}%`}  color={globalEfisiensi >= 80 ? '#10b981' : globalEfisiensi >= 50 ? '#B49A35' : '#ef4444'} />
-            <StatCard label="Sisa / Tidak Terjual" val={totalDiproduksi - totalTerjual} color="#B49A35" />
+            <StatCard label="Sisa / Belum Terkirim" val={totalDiproduksi - totalTerkirim} color="#B49A35" />
           </div>
 
           {/* Info bar efisiensi */}
           <div style={{ marginBottom:16, padding:'10px 16px', borderRadius:10, background: globalEfisiensi >= 80 ? '#d1fae5' : globalEfisiensi >= 50 ? '#FBF5DF' : '#fee2e2', border: `1px solid ${globalEfisiensi >= 80 ? '#6ee7b7' : globalEfisiensi >= 50 ? '#D4B340' : '#fca5a5'}` }}>
             <span style={{ fontWeight:700, fontSize:13, color: globalEfisiensi >= 80 ? '#065f46' : globalEfisiensi >= 50 ? '#6B5418' : '#991b1b' }}>
               {globalEfisiensi >= 80 ? '✅ Efisiensi Baik' : globalEfisiensi >= 50 ? '⚠️ Efisiensi Sedang' : '🔴 Efisiensi Rendah'}
-              {' '}— {globalEfisiensi}% produksi berhasil terjual di periode ini.
+              {' '}— {globalEfisiensi}% produksi berhasil terkirim di periode ini.
             </span>
           </div>
 
@@ -850,7 +852,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
                   <TH>Produk</TH>
                   <TH>Kategori</TH>
                   <TH right>Diproduksi</TH>
-                  <TH right>Terjual</TH>
+                  <TH right>Terkirim</TH>
                   <TH right>Retur Rusak</TH>
                   <TH right>Sisa</TH>
                   <TH right>Efisiensi</TH>
@@ -859,7 +861,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
                   {produksiReport.length === 0
                     ? <tr><td colSpan={7} style={{ textAlign:'center', padding:32, color:'#94a3b8' }}>Tidak ada data produksi di periode ini</td></tr>
                     : produksiReport.map(r => {
-                      const sisa = r.diproduksi - r.terjual;
+                      const sisa = r.diproduksi - r.terkirim;
                       const ef = r.efisiensi;
                       const efColor = ef === null ? '#94a3b8' : ef >= 80 ? '#10b981' : ef >= 50 ? '#B49A35' : '#ef4444';
                       return (
@@ -867,7 +869,7 @@ export default function Reports({ products, outlets, orders, stockIn, stockOut, 
                           <TD bold>{r.product.name}</TD>
                           <TD small color="#64748b">{r.product.kategori||'-'}</TD>
                           <TD right bold color="#3b82f6">{r.diproduksi}</TD>
-                          <TD right bold color="#10b981">{r.terjual}</TD>
+                          <TD right bold color="#10b981">{r.terkirim}</TD>
                           <TD right bold color={r.diretur > 0 ? '#ef4444' : '#94a3b8'}>{r.diretur > 0 ? r.diretur : '—'}</TD>
                           <TD right bold color={sisa > 0 ? '#B49A35' : '#94a3b8'}>{sisa > 0 ? sisa : '—'}</TD>
                           <td style={{ padding:'10px 12px', textAlign:'right' }}>
