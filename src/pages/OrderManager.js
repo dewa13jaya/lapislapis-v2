@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 import { uid, today, fmtDate, S, REJECT_REASONS, STATUS_CFG, useIsMobile } from '../utils';
@@ -29,6 +29,10 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
   const [dateTo, setDateTo]               = useState('');
   const [sortBy, setSortBy]               = useState('newest');
 
+  // ── Mass Order mode ───────────────────────────────────────────────────────
+  const [massOrderMode, setMassOrderMode] = useState(false);
+  const [massOrderQty, setMassOrderQty]   = useState({}); // { product_id: qty_string }
+
   // ── Modal state (menggantikan window.prompt) ──────────────────────────────
   const [packingModal, setPackingModal]       = useState(null); // order object
   const [packingData, setPackingData]         = useState({ driver:'', vehicle:'' });
@@ -38,7 +42,9 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const KAT_LIST   = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
-  const getVariant = name => { const m = name.match(/^(.+?)\s*-\s*(Slice|Quarter|Half|Round|Square)$/i); return m ? m[1].trim() : name; };
+  const SIZES_RE   = /\s*[-–]?\s*(Slice|Quarter|Half|Round|Square|Loyang)\s*$/i;
+  const getSizeName = name => { const m = name.match(SIZES_RE); return m ? m[1] : ''; };
+  const getVariant  = name => name.replace(SIZES_RE, '').trim();
   const variantsFor = kat => [...new Set(products.filter(p => !kat || p.kategori === kat).map(p => getVariant(p.name)))].sort();
   const sizesFor   = variant => products.filter(p => getVariant(p.name) === variant);
 
@@ -77,6 +83,38 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
     setForm({ outlet_id:'', delivery_date: today(), notes:'', items:[] });
     setNewItem({ kat:'', variant:'', product_id:'', qty:'' });
     setShowForm(false);
+    refreshOrders();
+  };
+
+  // ── Mass Order submit ─────────────────────────────────────────────────────
+  const submitMassOrder = async () => {
+    if (!form.outlet_id) return showToast('❌ Pilih outlet tujuan');
+    const items = products
+      .filter(p => Number(massOrderQty[p.id] || 0) > 0)
+      .map(p => ({ product_id: p.id, qty: Number(massOrderQty[p.id]) }));
+    if (items.length === 0) return showToast('❌ Isi qty minimal 1 produk');
+    setSaving(true);
+    const orderNo = 'ORD-' + new Date().getFullYear() + '-' + String(orders.length + 1).padStart(4, '0');
+    const orderId = uid();
+    const { error: oErr } = await supabase.from('orders').insert({
+      id: orderId, order_no: orderNo, outlet_id: form.outlet_id,
+      delivery_date: form.delivery_date, notes: form.notes,
+      original_delivery_date: form.delivery_date,
+      status: 'pending', created_by: user.id, created_by_name: user.name,
+    });
+    if (oErr) { setSaving(false); return showToast('❌ ' + oErr.message); }
+    await supabase.from('order_items').insert(
+      items.map((item, idx) => ({
+        id: uid(), order_id: orderId, product_id: item.product_id,
+        qty: item.qty, qty_delivered: item.qty, qty_rejected: 0, no: idx + 1,
+      }))
+    );
+    await logActivity(user, 'order_buat', `Order ${orderNo} (mass) dibuat untuk ${outlets.find(o => o.id === form.outlet_id)?.name}`);
+    setSaving(false);
+    showToast('✅ Order ' + orderNo + ' berhasil dibuat!');
+    setMassOrderQty({});
+    setMassOrderMode(false);
+    setForm({ outlet_id: '', delivery_date: today(), notes: '', items: [] });
     refreshOrders();
   };
 
@@ -235,7 +273,16 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
         <h2 style={{ margin:0, fontWeight:800, color:'#1C1208', fontSize: isMobile ? 20 : 24 }}>Order Sales</h2>
-        {canCreate && <Btn onClick={() => setShowForm(!showForm)} color="#1C1208">{showForm ? '✕ Tutup' : '+ Buat Order'}</Btn>}
+        {canCreate && (
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <Btn onClick={() => { setMassOrderMode(m => !m); setShowForm(false); setMassOrderQty({}); }} color={massOrderMode ? '#64748b' : '#3b82f6'}>
+              {massOrderMode ? '✕ Tutup' : '⊞ Mass Input'}
+            </Btn>
+            <Btn onClick={() => { setShowForm(f => !f); setMassOrderMode(false); }} color="#1C1208">
+              {showForm ? '✕ Tutup' : '+ Buat Order'}
+            </Btn>
+          </div>
+        )}
       </div>
 
       {/* ── New Order Form ──────────────────────────────────────────────────── */}
@@ -378,6 +425,131 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
           <Btn onClick={submitOrder} disabled={saving} color="#10b981" style={{ width: isMobile ? '100%' : 'auto' }}>{saving ? 'Menyimpan...' : '✅ Kirim Order ke Produksi'}</Btn>
         </div>
       )}
+
+      {/* ── Mass Order Grid ─────────────────────────────────────────────────── */}
+      {massOrderMode && canCreate && (() => {
+        const MASS_SIZES  = ['Slice','Quarter','Half','Round','Square'];
+        const MASS_LABELS = { Slice:'Slc', Quarter:'Qtr', Half:'Half', Round:'Rnd', Square:'Sqr' };
+        const KAT_ORDER   = ['Lapis Legit','Lapis Surabaya','Cookies','Gift Box'];
+        const KAT_COLOR   = { 'Lapis Legit':'#FBF5DF','Lapis Surabaya':'#dbeafe','Cookies':'#fce7f3','Gift Box':'#d1fae5' };
+
+        // Build pivot: { kat: { variant: { size: product } } }
+        const mp = {};
+        products.forEach(p => {
+          const kat     = p.kategori || 'Lainnya';
+          const variant = getVariant(p.name);
+          let sz = getSizeName(p.name);
+          if (!sz || sz.toLowerCase() === 'loyang') sz = 'Square';
+          if (!mp[kat]) mp[kat] = {};
+          if (!mp[kat][variant]) mp[kat][variant] = {};
+          mp[kat][variant][sz] = p;
+        });
+
+        const activeCols  = MASS_SIZES.filter(sz => Object.values(mp).some(vs => Object.values(vs).some(ss => ss[sz])));
+        const sortedKats  = [...KAT_ORDER.filter(k => mp[k]), ...Object.keys(mp).filter(k => !KAT_ORDER.includes(k)).sort()];
+        const totalFilled = Object.values(massOrderQty).filter(v => Number(v) > 0).length;
+
+        return (
+          <div style={{ background:'#fff', borderRadius:12, padding: isMobile ? 16 : 24, boxShadow:'0 1px 4px rgba(0,0,0,.07)', marginBottom:20 }}>
+            <h3 style={{ margin:'0 0 16px', fontSize:16, fontWeight:700 }}>⊞ Mass Input Order</h3>
+
+            {/* Header fields: outlet, tanggal, catatan */}
+            <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap:12, marginBottom:16 }}>
+              <FieldGroup label="Outlet Tujuan *">
+                <select value={form.outlet_id} onChange={e => setForm(f => ({...f, outlet_id: e.target.value}))} style={S.input}>
+                  <option value=''>-- Pilih --</option>
+                  {availableOutlets.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+                {user?.role === 'sales' && assignedOutletIds.length === 0 && (
+                  <div style={{ fontSize:12, color:'#ef4444', marginTop:4 }}>⚠️ Belum di-assign ke outlet. Hubungi admin.</div>
+                )}
+              </FieldGroup>
+              <FieldGroup label="Tanggal Kirim *">
+                <input type="date" value={form.delivery_date} onChange={e => setForm(f => ({...f, delivery_date: e.target.value}))} style={S.input} />
+              </FieldGroup>
+              <FieldGroup label="Catatan">
+                <input value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} style={S.input} placeholder="Opsional..." />
+              </FieldGroup>
+            </div>
+
+            {/* Pivot grid */}
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ borderCollapse:'collapse', tableLayout:'fixed', width:'auto', minWidth:'100%' }}>
+                <colgroup>
+                  <col style={{ width: isMobile ? 120 : 180 }} />
+                  {activeCols.map(sz => <col key={sz} style={{ width: isMobile ? 64 : 76 }} />)}
+                </colgroup>
+                <thead>
+                  <tr style={{ background:'#f8f7f4' }}>
+                    <th style={{ padding:'6px 10px', textAlign:'left', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>Varian</th>
+                    {activeCols.map(sz => (
+                      <th key={sz} style={{ padding:'6px 8px', textAlign:'center', fontSize:10, color:'#64748b', fontWeight:700, borderBottom:'2px solid #e2e8f0' }}>
+                        {MASS_LABELS[sz] || sz}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedKats.map(kat => (
+                    <React.Fragment key={kat}>
+                      <tr>
+                        <td colSpan={activeCols.length + 1} style={{ background: KAT_COLOR[kat]||'#f1f5f9', padding:'5px 10px', fontWeight:700, fontSize:11, color:'#374151', borderTop:'2px solid #e2e8f0' }}>
+                          {kat}
+                        </td>
+                      </tr>
+                      {Object.keys(mp[kat]).sort().map(variant => {
+                        const sizes = mp[kat][variant];
+                        return (
+                          <tr key={variant} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                            <td style={{ padding:'4px 10px', fontSize:11, fontWeight:600, color:'#1C1208', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                              {variant}
+                            </td>
+                            {activeCols.map(sz => {
+                              const p = sizes[sz];
+                              if (!p) return <td key={sz} style={{ padding:'3px 4px', textAlign:'center', color:'#d1d5db', fontSize:11 }}>—</td>;
+                              const stok = currentStock[p.id] || 0;
+                              const hasVal = Number(massOrderQty[p.id] || 0) > 0;
+                              return (
+                                <td key={sz} style={{ padding:'3px 4px', textAlign:'center' }}>
+                                  <input
+                                    type="number" min="0"
+                                    value={massOrderQty[p.id] || ''}
+                                    onChange={e => setMassOrderQty(q => ({ ...q, [p.id]: e.target.value }))}
+                                    placeholder="0"
+                                    style={{ width:'100%', padding:'5px 4px', textAlign:'center', border:`2px solid ${hasVal ? '#3b82f6' : '#e2e8f0'}`, borderRadius:6, fontSize:13, fontWeight:700, outline:'none', boxSizing:'border-box', background: hasVal ? '#eff6ff' : '#fff', color:'#111', colorScheme:'light' }}
+                                  />
+                                  <div style={{ fontSize:9, color: stok <= 0 ? '#ef4444' : '#94a3b8', marginTop:1 }}>stok:{stok}</div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Submit */}
+            <div style={{ marginTop:16, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+              <Btn
+                onClick={submitMassOrder}
+                disabled={saving || totalFilled === 0 || !form.outlet_id}
+                color={totalFilled > 0 && form.outlet_id ? '#10b981' : '#94a3b8'}
+              >
+                {saving ? 'Menyimpan...' : `✅ Kirim Order${totalFilled > 0 ? ` (${totalFilled} produk)` : ''}`}
+              </Btn>
+              {totalFilled > 0 && (
+                <button onClick={() => setMassOrderQty({})} style={{ padding:'10px 16px', background:'none', border:'1px solid #e2e8f0', borderRadius:8, fontSize:13, cursor:'pointer', color:'#64748b' }}>
+                  Reset
+                </button>
+              )}
+              {!form.outlet_id && <span style={{ fontSize:12, color:'#ef4444' }}>⚠️ Pilih outlet dulu</span>}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Search + Filter ─────────────────────────────────────────────────── */}
       <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap', alignItems:'center' }}>
