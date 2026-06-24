@@ -1349,6 +1349,7 @@ export default function StockManager({ products, outlets, stockIn, stockOut, ret
                         </tbody>
                       </table>
                       <Btn onClick={() => {
+                        if (activeTab === 'in' && !sharedBatch) return showToast('❌ Kode batch wajib diisi');
                         const previewItems = cart.map(item => ({ name: item.product_name, unit: item.unit, qty: item.qty, extra: item.returKondisi === 'rusak' ? '💔 Rusak' : item.returKondisi === 'repakai' ? '✅ Bagus' : '' }));
                         setConfirmStockModal({ type:'cart', items: previewItems, batch: sharedBatch, date: sharedDate, tab: activeTab });
                       }} disabled={saving || cart.length === 0} color="#10b981" style={{ marginTop:12, width:'100%', fontSize:13 }}>
