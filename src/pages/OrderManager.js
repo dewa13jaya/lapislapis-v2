@@ -74,11 +74,24 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
     setNewItem({ kat:'', variant:'', product_id:'', qty:'' });
   };
 
+  // Generate order number dari DB — hindari duplikat akibat orders.length
+  const getNextOrderNo = async () => {
+    const year = new Date().getFullYear();
+    const { data } = await supabase
+      .from('orders')
+      .select('order_no')
+      .like('order_no', `ORD-${year}-%`)
+      .order('order_no', { ascending: false })
+      .limit(1);
+    const lastNum = data?.[0]?.order_no ? parseInt(data[0].order_no.split('-')[2]) : 0;
+    return `ORD-${year}-${String(lastNum + 1).padStart(4, '0')}`;
+  };
+
   const submitOrder = async () => {
     if (!form.outlet_id) return showToast('❌ Pilih outlet tujuan');
     if (form.items.length === 0) return showToast('❌ Tambahkan minimal 1 produk');
     setSaving(true);
-    const orderNo = 'ORD-' + new Date().getFullYear() + '-' + String(orders.length+1).padStart(4,'0');
+    const orderNo = await getNextOrderNo();
     const orderId = uid();
     const { error: oErr } = await supabase.from('orders').insert({ id: orderId, order_no: orderNo, outlet_id: form.outlet_id, delivery_date: form.delivery_date, notes: form.notes, original_delivery_date: form.delivery_date, status:'pending', created_by: user.id, created_by_name: user.name });
     if (oErr) { setSaving(false); return showToast('❌ ' + oErr.message); }
@@ -100,7 +113,7 @@ export default function OrderManager({ products, outlets, orders, currentStock, 
       .map(p => ({ product_id: p.id, qty: Number(massOrderQty[p.id]) }));
     if (items.length === 0) return showToast('❌ Isi qty minimal 1 produk');
     setSaving(true);
-    const orderNo = 'ORD-' + new Date().getFullYear() + '-' + String(orders.length + 1).padStart(4, '0');
+    const orderNo = await getNextOrderNo();
     const orderId = uid();
     const { error: oErr } = await supabase.from('orders').insert({
       id: orderId, order_no: orderNo, outlet_id: form.outlet_id,
