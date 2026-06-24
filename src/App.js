@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useIsMobile } from './utils';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { supabase } from './supabase';
@@ -83,6 +83,20 @@ function MainApp() {
 
   useEffect(() => { if (user) fetchAll(); }, [user, fetchAll]);
 
+  // ── Notification permission ───────────────────────────────────────────────
+  // Minta izin notifikasi untuk role produksi / kepala_produksi / admin
+  useEffect(() => {
+    if (!user) return;
+    const notifRoles = ['admin', 'produksi', 'kepala_produksi'];
+    if (notifRoles.includes(user.role) && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, [user]);
+
+  // Ref agar closure realtime selalu punya data outlets terbaru (avoid stale closure)
+  const outletsRef = useRef(outlets);
+  useEffect(() => { outletsRef.current = outlets; }, [outlets]);
+
   // ── Granular realtime ──────────────────────────────────────────────────────
   // Sebelumnya: semua event → fetchAll() (8 tabel sekaligus, tiap ada perubahan apapun).
   // Sekarang: tiap tabel hanya fetch dirinya sendiri.
@@ -107,6 +121,30 @@ function MainApp() {
     );
     return () => channels.forEach(c => supabase.removeChannel(c));
   }, [user, fetchProducts, fetchOutlets, fetchStockIn, fetchStockOut, fetchReturns, fetchOrders, fetchStaff, fetchActivityLog]);
+
+  // ── Order notification realtime ───────────────────────────────────────────
+  // Channel terpisah khusus INSERT orders → browser notification ke tim produksi
+  useEffect(() => {
+    if (!user) return;
+    const notifRoles = ['admin', 'produksi', 'kepala_produksi'];
+    if (!notifRoles.includes(user.role)) return;
+
+    const channel = supabase.channel('rt-orders-notify')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        const order = payload.new;
+        const outlet = outletsRef.current.find(o => o.id === order.outlet_id);
+        const outletName = outlet?.name || 'Outlet';
+        new Notification('📦 Order Baru Masuk!', {
+          body: `${order.order_no} · ${outletName} · Kirim: ${order.delivery_date}`,
+          icon: '/favicon.ico',
+          tag: order.id,   // cegah notif duplikat untuk order yang sama
+        });
+      })
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [user]);
 
   // ── currentStock — O(n+m) single-pass Map ─────────────────────────────────
   // Sebelumnya: O(n×m) — untuk tiap produk, .filter() ulang seluruh array stok.
